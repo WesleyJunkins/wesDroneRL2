@@ -64,6 +64,7 @@ typedef struct {
     int height_diff_increase;
     int height_diff_decrease;
     int reset_simulation;
+    int request_image;
 } control_commands_json_t;
 
 // Function to parse JSON control commands
@@ -80,15 +81,16 @@ control_commands_json_t parse_control_json(const char* json_str) {
     if (strstr(json_str, "\"height_diff_increase\":1") || strstr(json_str, "\"height_diff_increase\": 1")) commands.height_diff_increase = 1;
     if (strstr(json_str, "\"height_diff_decrease\":1") || strstr(json_str, "\"height_diff_decrease\": 1")) commands.height_diff_decrease = 1;
     if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
+    if (strstr(json_str, "\"request_image\":1") || strstr(json_str, "\"request_image\": 1")) commands.request_image = 1;
     
     // Debug output to see what was parsed
     if (commands.forward || commands.backward || commands.left || commands.right || 
         commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase || 
-        commands.height_diff_decrease || commands.reset_simulation) {
-        printf("Parsed commands - forward:%d backward:%d left:%d right:%d yaw_inc:%d yaw_dec:%d height_inc:%d height_dec:%d reset:%d\n",
+        commands.height_diff_decrease || commands.reset_simulation || commands.request_image) {
+        printf("Parsed commands - forward:%d backward:%d left:%d right:%d yaw_inc:%d yaw_dec:%d height_inc:%d height_dec:%d reset:%d request_img:%d\n",
                commands.forward, commands.backward, commands.left, commands.right,
                commands.yaw_increase, commands.yaw_decrease, commands.height_diff_increase,
-               commands.height_diff_decrease, commands.reset_simulation);
+               commands.height_diff_decrease, commands.reset_simulation, commands.request_image);
     }
     
     return commands;
@@ -145,6 +147,57 @@ control_commands_json_t handle_socket_communication(int server_socket) {
     }
     
     return commands;
+}
+
+// Function to check if commands are non-idle (any command is active)
+int is_non_idle_command(control_commands_json_t commands) {
+    return commands.forward || commands.backward || commands.left || commands.right ||
+           commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase ||
+           commands.height_diff_decrease || commands.reset_simulation || commands.request_image;
+}
+
+// Function to send camera image to client
+void send_camera_image(int client_socket, WbDeviceTag camera) {
+    if (client_socket < 0) {
+        printf("Cannot send image: no client connected\n");
+        return;
+    }
+    
+    // Get camera image
+    const unsigned char *image = wb_camera_get_image(camera);
+    if (!image) {
+        printf("Cannot send image: no image data available\n");
+        return;
+    }
+    
+    int width = wb_camera_get_width(camera);
+    int height = wb_camera_get_height(camera);
+    // Webots cameras typically have 4 channels (RGBA)
+    int channels = 4;
+    
+    printf("Preparing to send image: %dx%d, %d channels\n", width, height, channels);
+    
+    // Create image header
+    char header[256];
+    snprintf(header, sizeof(header), "IMAGE:%dx%dx%d:", width, height, channels);
+    
+    // Send header
+    int header_sent = send(client_socket, header, strlen(header), 0);
+    if (header_sent < 0) {
+        printf("Failed to send image header\n");
+        return;
+    }
+    printf("Sent image header: %s (%d bytes)\n", header, header_sent);
+    
+    // Send image data
+    int image_size = width * height * channels;
+    int image_sent = send(client_socket, (const char*)image, image_size, 0);
+    if (image_sent < 0) {
+        printf("Failed to send image data\n");
+        return;
+    }
+    
+    printf("Sent camera image: %dx%d, %d channels (RGBA), %d bytes\n", width, height, channels, image_sent);
 }
 
 // Function to initialize socket server
@@ -249,10 +302,13 @@ int main(int argc, char **argv) {
 
   double height_desired = FLYING_ALTITUDE;
 
-  // Initialize struct for motor power
-  motor_power_t motor_power;
+      // Initialize struct for motor power
+    motor_power_t motor_power;
+    
+    // Track previous command state for image sending
+    control_commands_json_t prev_commands = {0};
 
-  printf("\n");
+    printf("\n");
 
   printf("====== Controls =======\n");
 
@@ -298,6 +354,16 @@ int main(int argc, char **argv) {
 
     // Handle socket communication and get control commands
     control_commands_json_t socket_commands = handle_socket_communication(server_socket);
+    
+    // Send camera image when non-idle command is first received
+    if (is_non_idle_command(socket_commands) && !is_non_idle_command(prev_commands)) {
+        printf("Non-idle command detected, sending camera image...\n");
+        send_camera_image(g_client_socket, camera);
+        printf("Camera image sent in response to non-idle command\n");
+    }
+    
+    // Update previous commands
+    prev_commands = socket_commands;
 
     // Debug: Print socket command state periodically
     static int debug_counter = 0;
@@ -307,6 +373,15 @@ int main(int argc, char **argv) {
                socket_commands.forward, socket_commands.backward, socket_commands.left, socket_commands.right,
                socket_commands.yaw_increase, socket_commands.yaw_decrease, socket_commands.height_diff_increase,
                socket_commands.height_diff_decrease, socket_commands.reset_simulation);
+    }
+    
+    // Send camera image on startup (5 seconds after start)
+    static int startup_counter = 0;
+    startup_counter++;
+    if (startup_counter == 500) {  // ~5 seconds after startup
+        printf("Attempting to send startup camera image...\n");
+        send_camera_image(g_client_socket, camera);
+        printf("Startup camera image attempt completed\n");
     }
 
     // Control based on socket commands instead of keyboard
@@ -346,6 +421,11 @@ int main(int argc, char **argv) {
       // Reset simulation logic could be added here
       printf("Reset simulation requested\n");
     }
+    if (socket_commands.request_image) {
+      printf("Image request received, sending camera image...\n");
+      send_camera_image(g_client_socket, camera);
+      printf("Camera image sent in response to request\n");
+    }
 
     height_desired += height_diff_desired * dt;
 
@@ -377,6 +457,7 @@ int main(int argc, char **argv) {
     socket_commands.height_diff_increase = 0;
     socket_commands.height_diff_decrease = 0;
     socket_commands.reset_simulation = 0;
+    socket_commands.request_image = 0;
 
     // Save past time for next time step
     past_time = wb_robot_get_time();
