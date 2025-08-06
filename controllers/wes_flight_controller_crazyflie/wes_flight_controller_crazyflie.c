@@ -367,6 +367,17 @@ int main(int argc, char **argv) {
     wb_motor_set_velocity(m3_motor, -motor_power.m3);
     wb_motor_set_velocity(m4_motor, motor_power.m4);
 
+    // Reset command values to prevent accumulation from rapid socket commands
+    socket_commands.forward = 0;
+    socket_commands.backward = 0;
+    socket_commands.left = 0;
+    socket_commands.right = 0;
+    socket_commands.yaw_increase = 0;
+    socket_commands.yaw_decrease = 0;
+    socket_commands.height_diff_increase = 0;
+    socket_commands.height_diff_decrease = 0;
+    socket_commands.reset_simulation = 0;
+
     // Save past time for next time step
     past_time = wb_robot_get_time();
     past_x_global = x_global;

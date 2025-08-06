@@ -162,7 +162,7 @@ class DroneController:
         print("  ESC - Exit")
         print("="*50)
         print("Press keys to control the drone...")
-        print("System will continuously send commands at 20Hz")
+        print("System will continuously send commands as fast as possible")
         print("="*50 + "\n")
     
     def run(self):
@@ -183,14 +183,11 @@ class DroneController:
             escape_listener.start()
             
             try:
-                last_send_time = time.time()
                 last_status_time = time.time()
                 while self.running:
                     current_time = time.time()
-                    # Send commands continuously every 50ms (20Hz)
-                    if current_time - last_send_time >= 0.05:
-                        self.send_continuous_commands()
-                        last_send_time = current_time
+                    # Send commands continuously as fast as possible
+                    self.send_continuous_commands()
                     
                     # Print status every 5 seconds
                     if current_time - last_status_time >= 5.0:
