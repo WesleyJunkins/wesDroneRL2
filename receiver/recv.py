@@ -5,14 +5,13 @@ Drone Control System - Receiver Module
 
 This module provides a keyboard-based control interface for a Crazyflie drone
 running in Webots simulation. It communicates with the drone controller via
-socket connection and receives camera images.
+socket connection and receives 2D arrays.
 
 Features:
-- Real-time keyboard control (WASD, QE, RF, SPACE, ESC)
 - Socket communication with Webots controller
-- Camera image reception and saving
+- 2D array reception and processing
 - Automatic reconnection on connection loss
-- Command-based image transmission
+- Random command generation based on received arrays
 
 Author: Wesley Junkins
 """
@@ -22,7 +21,7 @@ import json
 import time
 import sys
 import numpy as np
-import cv2
+import random
 from pynput import keyboard
 
 # Configuration constants
@@ -48,8 +47,8 @@ class DroneController:
     
     Handles:
     - Socket communication with Webots controller
-    - Keyboard input processing
-    - Camera image reception and processing
+    - 2D array reception and processing
+    - Random command generation
     - Automatic reconnection
     """
     
@@ -67,15 +66,24 @@ class DroneController:
             'height_diff_increase': 0,
             'height_diff_decrease': 0,
             'reset_simulation': 0,
-            'request_image': 0  # Special command to request camera images
+            'request_image': 0  # Special command to request arrays
         }
         self.running = True
         self.last_sent_state = None
         
-        # Image processing state
-        self.image_buffer = b''           # Accumulates incoming image data
-        self.expecting_image = False      # True when receiving image data
-        self.image_header = None          # (width, height, channels) tuple
+        # Array processing state
+        self.array_buffer = b''           # Accumulates incoming array data
+        self.expecting_array = False      # True when receiving array data
+        self.array_header = None          # (width, height) tuple
+        
+        # Random command generation
+        self.commands_available = [
+            'forward', 'backward', 'left', 'right',
+            'yaw_increase', 'yaw_decrease',
+            'height_diff_increase', 'height_diff_decrease',
+            'reset_simulation'  # This will restart the simulation
+        ]
+        self.array_received = False       # Flag to indicate when to send a command
         
     def connect_socket(self):
         """
@@ -94,39 +102,55 @@ class DroneController:
             print("Make sure the Webots simulation is running and the controller is active")
             return False
     
-    def send_continuous_commands(self):
+    def send_random_command(self):
         """
-        Send control commands continuously to the controller.
+        Send a random command to the controller.
         
-        This method is called in the main loop to maintain
-        constant communication with the Webots controller.
+        This method is called continuously and sends random commands
+        regardless of whether arrays are received.
         """
         if self.socket:
             try:
+                # Reset all commands to 0
+                for command in self.control_state:
+                    self.control_state[command] = 0
+                
+                # Select one random command (excluding request_image)
+                random_command = random.choice(self.commands_available)
+                self.control_state[random_command] = 1
+                
+                # Send the command
                 json_data = json.dumps(self.control_state)
                 self.socket.send(json_data.encode('utf-8'))
+                print(f"Sent random command: {random_command}")
+                
+                # Reset the flag if array was received
+                if self.array_received:
+                    self.array_received = False
+                
             except Exception as e:
-                print(f"Failed to send continuous command: {e}")
+                print(f"Failed to send random command: {e}")
                 self.reconnect_socket()
-        else:
+        elif not self.socket:
             # No socket connection, try to connect but don't send commands
             if not self.connect_socket():
                 # Don't print anything to avoid spam - just silently try to connect
                 pass
     
-    def receive_camera_image(self):
+    def receive_2d_array(self):
         """
-        Receive and process camera images from the Webots controller.
+        Receive and process 2D arrays from the Webots controller.
         
-        This method handles the binary image protocol:
-        1. Receives image header in format: "IMAGE:WIDTHxHEIGHTxCHANNELS:"
-        2. Accumulates binary image data
-        3. Saves complete images as JPEG files
-        4. Requests additional images after successful reception
+        This method handles the 2D array protocol:
+        1. Receives array header in format: "ARRAY:WIDTHxHEIGHT:"
+        2. Receives binary array data
+        3. Prints the 2D array to console
+        4. Sends a random command after processing
         """
         if not self.socket:
             return
         
+        data = None
         try:
             # Set socket to non-blocking to avoid blocking the main loop
             self.socket.setblocking(False)
@@ -134,72 +158,85 @@ class DroneController:
             # Try to receive data from the controller
             data = self.socket.recv(4096)
             if data:
-                # Check if this packet contains an image header
-                if data.startswith(b'IMAGE:'):
-                    # Parse the image header to get dimensions
-                    header_end = data.find(b':', 6)  # Skip "IMAGE:"
-                    if header_end != -1:
-                        # Extract only the header part (avoiding binary data)
-                        header_bytes = data[:header_end + 1]
-                        header_str = header_bytes.decode('utf-8')
-                        
-                        # Parse header format: "IMAGE:WIDTHxHEIGHTxCHANNELS:"
-                        header_parts = header_str.split(':')
-                        if len(header_parts) >= 2:
-                            dims = header_parts[1].split('x')
-                            if len(dims) == 3:
-                                # Extract image dimensions
-                                width = int(dims[0])
-                                height = int(dims[1])
-                                channels = int(dims[2])
-                                
-                                # Set up image reception
-                                self.image_header = (width, height, channels)
-                                self.expecting_image = True
-                                
-                                # Extract initial image data that came with the header
-                                image_data_part = data[header_end + 1:]
-                                self.image_buffer = image_data_part
-                                
-                                print(f"Receiving camera image: {width}x{height}, {channels} channels")
-                                return
-                
-                # If we're expecting image data, accumulate it
-                if self.expecting_image and self.image_header:
-                    self.image_buffer += data
-                    width, height, channels = self.image_header
-                    expected_size = width * height * channels
-                    
-                    # Check if we have received the complete image
-                    if len(self.image_buffer) >= expected_size:
-                        # Process the complete image
-                        image_data = np.frombuffer(self.image_buffer[:expected_size], dtype=np.uint8)
-                        image = image_data.reshape((height, width, channels))
-                        
-                        # Convert RGBA to RGB for saving (Webots uses RGBA format)
-                        if channels == 4:
-                            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-                        elif channels == 3:
-                            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        
-                        # Save the image as JPEG
-                        cv2.imwrite('drone_camera.jpg', image)
-                        print(f"Saved camera image: {width}x{height}, {channels} channels")
-                        
-                        # Request another image after successful reception
-                        self.control_state['request_image'] = 1
-                        time.sleep(0.1)  # Small delay to ensure the request is sent
-                        self.control_state['request_image'] = 0
-                        
-                        # Reset for next image
-                        self.expecting_image = False
-                        self.image_header = None
-                        self.image_buffer = b''
-                        
-        except Exception as e:
-            # Non-blocking socket will throw exception when no data available
-            # This is normal and expected behavior
+                print(f"Received data: {len(data)} bytes")
+                print(f"Data starts with: {data[:20]}")
+                # Check if this packet contains an array header
+                if data.startswith(b'ARRAY:'):
+                    print("Found ARRAY header!")
+                else:
+                    print("Data does not start with ARRAY:")
+            
+        except BlockingIOError:
+            # This is expected with non-blocking sockets when no data is available
             pass
+        except Exception as e:
+            print(f"Error receiving data: {e}")
+            pass
+            
+        # If we received data, process it
+        if data:
+            # Check if this packet contains an array header
+            if data.startswith(b'ARRAY:'):
+                print("Found ARRAY header!")
+                # Parse the array header to get dimensions
+                header_end = data.find(b':', 6)  # Skip "ARRAY:"
+                if header_end != -1:
+                    # Extract only the header part (avoiding binary data)
+                    header_bytes = data[:header_end + 1]
+                    header_str = header_bytes.decode('utf-8')
+                    
+                    # Parse header format: "ARRAY:WIDTHxHEIGHT:"
+                    header_parts = header_str.split(':')
+                    if len(header_parts) >= 2:
+                        dims = header_parts[1].split('x')
+                        if len(dims) == 2:
+                            # Extract array dimensions
+                            width = int(dims[0])
+                            height = int(dims[1])
+                            
+                            # Set up array reception
+                            self.array_header = (width, height)
+                            self.expecting_array = True
+                            
+                            # Extract initial array data that came with the header
+                            array_data_part = data[header_end + 1:]
+                            self.array_buffer = array_data_part
+                            
+                            print(f"Receiving 2D array: {width}x{height}")
+                            return
+            
+            # If we're expecting array data, accumulate it
+            if self.expecting_array and self.array_header:
+                self.array_buffer += data
+                width, height = self.array_header
+                expected_size = width * height  # int8_t = 1 byte per element
+                
+                # Check if we have received the complete array
+                if len(self.array_buffer) >= expected_size:
+                    # Process the complete array
+                    array_data = np.frombuffer(self.array_buffer[:expected_size], dtype=np.int8)
+                    array_2d = array_data.reshape((height, width))
+                    
+                    # Print the 2D array to console
+                    print(f"\nReceived 2D array ({height}x{width}):")
+                    print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
+                    print("-" * (width * 2 + 10))
+                    for row in array_2d:
+                        print(" ".join(map(str, row)))
+                    print("-" * (width * 2 + 10))
+                    
+                    # Set flag to send a random command after array processing
+                    self.array_received = True
+                    
+                    # Request another array after successful reception
+                    self.control_state['request_image'] = 1
+                    time.sleep(0.1)  # Small delay to ensure the request is sent
+                    self.control_state['request_image'] = 0
+                    
+                    # Reset for next array
+                    self.expecting_array = False
+                    self.array_header = None
+                    self.array_buffer = b''
     
     def reconnect_socket(self):
         """
@@ -224,51 +261,19 @@ class DroneController:
         """
         Handle keyboard key press events.
         
-        Maps keyboard input to drone control commands
-        and updates the control state accordingly.
+        Currently disabled - system uses random commands instead of keyboard input.
         """
-        try:
-            # Convert key to string for easier handling
-            if hasattr(key, 'char') and key.char:
-                key_str = key.char.lower()
-            elif key == keyboard.Key.space:
-                key_str = 'space'
-            else:
-                return
-            
-            # Check if it's a control key and update state
-            if key_str in CONTROL_KEYS:
-                control_name = CONTROL_KEYS[key_str]
-                self.control_state[control_name] = 1
-                print(f"Key pressed: {key_str} -> {control_name}")
-                
-        except AttributeError:
-            pass
+        # Keyboard input is disabled in favor of random commands
+        pass
     
     def on_key_release(self, key):
         """
         Handle keyboard key release events.
         
-        Resets control commands when keys are released
-        to ensure precise control.
+        Currently disabled - system uses random commands instead of keyboard input.
         """
-        try:
-            # Convert key to string for easier handling
-            if hasattr(key, 'char') and key.char:
-                key_str = key.char.lower()
-            elif key == keyboard.Key.space:
-                key_str = 'space'
-            else:
-                return
-            
-            # Check if it's a control key and reset state
-            if key_str in CONTROL_KEYS:
-                control_name = CONTROL_KEYS[key_str]
-                self.control_state[control_name] = 0
-                print(f"Key released: {key_str} -> {control_name}")
-                
-        except AttributeError:
-            pass
+        # Keyboard input is disabled in favor of random commands
+        pass
     
     def on_escape(self, key):
         """
@@ -287,20 +292,21 @@ class DroneController:
         print("\n" + "="*50)
         print("DRONE CONTROL INTERFACE")
         print("="*50)
-        print("Controls:")
-        print("  W - Forward")
-        print("  S - Backward") 
-        print("  A - Left")
-        print("  D - Right")
-        print("  Q - Yaw Decrease (Turn Left)")
-        print("  E - Yaw Increase (Turn Right)")
-        print("  R - Height Increase")
-        print("  F - Height Decrease")
-        print("  SPACE - Reset Simulation")
-        print("  ESC - Exit")
+        print("System Mode: RANDOM COMMAND GENERATION")
         print("="*50)
-        print("Press keys to control the drone...")
-        print("System will continuously send commands as fast as possible")
+        print("Available Commands:")
+        print("  forward - Move forward")
+        print("  backward - Move backward") 
+        print("  left - Move left")
+        print("  right - Move right")
+        print("  yaw_increase - Turn right")
+        print("  yaw_decrease - Turn left")
+        print("  height_diff_increase - Increase altitude")
+        print("  height_diff_decrease - Decrease altitude")
+        print("  reset_simulation - Restart simulation")
+        print("="*50)
+        print("System will send random commands continuously")
+        print("No keyboard input required - ESC to exit")
         print("Will automatically reconnect if connection is lost")
         print("="*50 + "\n")
     
@@ -334,27 +340,28 @@ class DroneController:
                 while self.running:
                     current_time = time.time()
                     
-                    # Send commands continuously as fast as possible
-                    self.send_continuous_commands()
+                    # Send random commands continuously
+                    self.send_random_command()
                     
-                    # Receive camera images
-                    self.receive_camera_image()
+                    # Receive 2D arrays
+                    if self.socket:
+                        self.receive_2d_array()
+                    else:
+                        # Try to connect if not connected
+                        self.connect_socket()
                     
                     # Print status every 5 seconds
                     if current_time - last_status_time >= 5.0:
-                        active_controls = [k for k, v in self.control_state.items() if v == 1]
-                        
-                        # Show connection status and active controls
+                        # Show connection status
                         if self.socket:
-                            if active_controls:
-                                print(f"✓ Connected - Active controls: {active_controls}")
-                            else:
-                                print("✓ Connected - Sending idle state (all controls: 0)")
+                            print("✓ Connected - Sending random commands continuously")
+                            print(f"Socket info: {self.socket}")
+                            try:
+                                print(f"Remote address: {self.socket.getpeername()}")
+                            except OSError:
+                                print("Remote address: Unknown (socket may be closed)")
                         else:
-                            if active_controls:
-                                print(f"✗ Not connected - Active controls: {active_controls} (not sending)")
-                            else:
-                                print("✗ Not connected - waiting for Webots controller...")
+                            print("✗ Not connected - waiting for Webots controller...")
                         
                         last_status_time = current_time
                     

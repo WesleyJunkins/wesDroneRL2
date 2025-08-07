@@ -36,6 +36,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdint.h>
 
 #include <webots/camera.h>
 #include <webots/distance_sensor.h>
@@ -45,6 +46,7 @@
 #include <webots/keyboard.h>
 #include <webots/motor.h>
 #include <webots/robot.h>
+#include <webots/supervisor.h>
 
 // Add external controller
 #include "pid_controller.h"
@@ -67,6 +69,9 @@ typedef struct {
     int request_image;
 } control_commands_json_t;
 
+// Global socket for communication
+static int g_socket = -1;
+
 // Function to parse JSON control commands
 control_commands_json_t parse_control_json(const char* json_str) {
     control_commands_json_t commands = {0};
@@ -83,70 +88,85 @@ control_commands_json_t parse_control_json(const char* json_str) {
     if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
     if (strstr(json_str, "\"request_image\":1") || strstr(json_str, "\"request_image\": 1")) commands.request_image = 1;
     
-    // Debug output to see what was parsed
-    if (commands.forward || commands.backward || commands.left || commands.right || 
-        commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase || 
-        commands.height_diff_decrease || commands.reset_simulation || commands.request_image) {
-        printf("Parsed commands - forward:%d backward:%d left:%d right:%d yaw_inc:%d yaw_dec:%d height_inc:%d height_dec:%d reset:%d request_img:%d\n",
-               commands.forward, commands.backward, commands.left, commands.right,
-               commands.yaw_increase, commands.yaw_decrease, commands.height_diff_increase,
-               commands.height_diff_decrease, commands.reset_simulation, commands.request_image);
-    }
-    
     return commands;
 }
 
-// Global variable to store client socket
-static int g_client_socket = -1;
+// Function to convert RGBA image to grayscale brightness values (0-255)
+int get_brightness(const unsigned char *rgba_pixel) {
+    // Convert RGBA to grayscale using standard luminance formula
+    // R*0.299 + G*0.587 + B*0.114
+    int r = rgba_pixel[0];
+    int g = rgba_pixel[1];
+    int b = rgba_pixel[2];
+    return (int)(r * 0.299 + g * 0.587 + b * 0.114);
+}
 
-// Function to handle socket communication
-control_commands_json_t handle_socket_communication(int server_socket) {
-    control_commands_json_t commands = {0};
-    char buffer[BUFFER_SIZE];
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
+// Function to convert brightness (0-255) to our 0-4 scale
+int brightness_to_scale(int brightness) {
+    if (brightness <= 51) return 0;      // Black
+    if (brightness <= 102) return 1;     // Dark gray
+    if (brightness <= 153) return 2;     // Medium gray
+    if (brightness <= 204) return 3;     // Light gray
+    return 4;                            // White
+}
+
+// Function to send 2D array to port
+void send_2d_array(WbDeviceTag camera) {
+    // Get camera image
+    const unsigned char *image = wb_camera_get_image(camera);
+    if (!image) {
+        printf("Cannot send array: no image data available\n");
+        return;
+    }
     
-    // Set socket to non-blocking mode
-    int flags = fcntl(server_socket, F_GETFL, 0);
-    fcntl(server_socket, F_SETFL, flags | O_NONBLOCK);
+    int width = wb_camera_get_width(camera);
+    int height = wb_camera_get_height(camera);
+    int channels = 4; // RGBA
     
-    // If no client is connected, try to accept a new connection
-    if (g_client_socket < 0) {
-        g_client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
-        if (g_client_socket >= 0) {
-            // Set client socket to non-blocking
-            flags = fcntl(g_client_socket, F_GETFL, 0);
-            fcntl(g_client_socket, F_SETFL, flags | O_NONBLOCK);
-            printf("Client connected\n");
+    printf("Converting image to 2D array: %dx%d\n", width, height);
+    
+    // Create 2D array
+    int8_t *array_2d = malloc(width * height * sizeof(int8_t));
+    if (!array_2d) {
+        printf("Failed to allocate memory for 2D array\n");
+        return;
+    }
+    
+    // Convert image to 2D array
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int pixel_index = (y * width + x) * channels;
+            int brightness = get_brightness(&image[pixel_index]);
+            int scale_value = brightness_to_scale(brightness);
+            array_2d[y * width + x] = (int8_t)scale_value;
         }
     }
     
-    // If we have a client connection, try to receive data
-    if (g_client_socket >= 0) {
-        int bytes_received = recv(g_client_socket, buffer, BUFFER_SIZE - 1, 0);
-        if (bytes_received > 0) {
-            buffer[bytes_received] = '\0';
-            printf("Received JSON (%d bytes): %s\n", bytes_received, buffer);
-            commands = parse_control_json(buffer);
-        } else if (bytes_received == 0) {
-            // Client disconnected
-            printf("Client disconnected\n");
-            close(g_client_socket);
-            g_client_socket = -1;
-        } else if (bytes_received < 0) {
-            // No data available (non-blocking)
-            // This is normal, just continue
+    // Print the 2D array to console
+    printf("\n2D Array (%dx%d) before sending:\n", width, height);
+    printf("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white\n");
+    printf("-");
+    for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    printf("\n");
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            printf("%d ", array_2d[y * width + x]);
         }
-    } else {
-        // No client connected - this is normal at startup
-        static int connection_attempts = 0;
-        connection_attempts++;
-        if (connection_attempts % 1000 == 0) {  // Print every ~10 seconds
-            printf("Waiting for client connection...\n");
-        }
+        printf("\n");
     }
     
-    return commands;
+    printf("-");
+    for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    printf("\n");
+    
+    // Send array data to port
+    int array_size = width * height * sizeof(int8_t);
+    send(g_socket, (const char*)array_2d, array_size, 0);
+    printf("Sent 2D array: %dx%d, %d bytes\n", width, height, array_size);
+    
+    // Clean up
+    free(array_2d);
 }
 
 // Function to check if commands are non-idle (any command is active)
@@ -156,81 +176,47 @@ int is_non_idle_command(control_commands_json_t commands) {
            commands.height_diff_decrease || commands.reset_simulation || commands.request_image;
 }
 
-// Function to send camera image to client
-void send_camera_image(int client_socket, WbDeviceTag camera) {
-    if (client_socket < 0) {
-        printf("Cannot send image: no client connected\n");
-        return;
-    }
-    
-    // Get camera image
-    const unsigned char *image = wb_camera_get_image(camera);
-    if (!image) {
-        printf("Cannot send image: no image data available\n");
-        return;
-    }
-    
-    int width = wb_camera_get_width(camera);
-    int height = wb_camera_get_height(camera);
-    // Webots cameras typically have 4 channels (RGBA)
-    int channels = 4;
-    
-    printf("Preparing to send image: %dx%d, %d channels\n", width, height, channels);
-    
-    // Create image header
-    char header[256];
-    snprintf(header, sizeof(header), "IMAGE:%dx%dx%d:", width, height, channels);
-    
-    // Send header
-    int header_sent = send(client_socket, header, strlen(header), 0);
-    if (header_sent < 0) {
-        printf("Failed to send image header\n");
-        return;
-    }
-    printf("Sent image header: %s (%d bytes)\n", header, header_sent);
-    
-    // Send image data
-    int image_size = width * height * channels;
-    int image_sent = send(client_socket, (const char*)image, image_size, 0);
-    if (image_sent < 0) {
-        printf("Failed to send image data\n");
-        return;
-    }
-    
-    printf("Sent camera image: %dx%d, %d channels (RGBA), %d bytes\n", width, height, channels, image_sent);
-}
-
-// Function to initialize socket server
-int init_socket_server() {
-    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket == -1) {
+// Function to initialize socket connection
+int init_socket_connection() {
+    g_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_socket == -1) {
         printf("Failed to create socket\n");
         return -1;
     }
     
-    // Set socket options to reuse address
-    int opt = 1;
-    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     server_addr.sin_port = htons(SOCKET_PORT);
     
-    if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        printf("Failed to bind socket\n");
-        close(server_socket);
+    if (connect(g_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        printf("Failed to connect to port %d\n", SOCKET_PORT);
+        close(g_socket);
         return -1;
     }
     
-    if (listen(server_socket, 5) < 0) {
-        printf("Failed to listen on socket\n");
-        close(server_socket);
-        return -1;
+    // Set socket to non-blocking
+    int flags = fcntl(g_socket, F_GETFL, 0);
+    fcntl(g_socket, F_SETFL, flags | O_NONBLOCK);
+    
+    printf("Connected to port %d\n", SOCKET_PORT);
+    return g_socket;
+}
+
+// Function to check for incoming commands
+control_commands_json_t check_for_commands() {
+    control_commands_json_t commands = {0};
+    char buffer[BUFFER_SIZE];
+    
+    if (g_socket >= 0) {
+        int bytes_received = recv(g_socket, buffer, BUFFER_SIZE - 1, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';
+            commands = parse_control_json(buffer);
+        }
     }
     
-    printf("Socket server initialized on port %d\n", SOCKET_PORT);
-    return server_socket;
+    return commands;
 }
 
 int main(int argc, char **argv) {
@@ -238,8 +224,8 @@ int main(int argc, char **argv) {
 
   const int timestep = (int)wb_robot_get_basic_time_step();
 
-  // Initialize socket server
-  int server_socket = init_socket_server();
+  // Initialize socket connection
+  init_socket_connection();
 
   // Initialize motors
   WbDeviceTag m1_motor = wb_robot_get_device("m1_motor");
@@ -302,13 +288,13 @@ int main(int argc, char **argv) {
 
   double height_desired = FLYING_ALTITUDE;
 
-      // Initialize struct for motor power
-    motor_power_t motor_power;
-    
-    // Track previous command state for image sending
-    control_commands_json_t prev_commands = {0};
+  // Initialize struct for motor power
+  motor_power_t motor_power;
+  
+  // Track previous command state for image sending
+  control_commands_json_t prev_commands = {0};
 
-    printf("\n");
+  printf("\n");
 
   printf("====== Controls =======\n");
 
@@ -352,36 +338,24 @@ int main(int argc, char **argv) {
     double yaw_desired = 0;
     double height_diff_desired = 0;
 
-    // Handle socket communication and get control commands
-    control_commands_json_t socket_commands = handle_socket_communication(server_socket);
+    // Check for incoming commands
+    control_commands_json_t socket_commands = check_for_commands();
     
-    // Send camera image when non-idle command is first received
+    // Send 2D array when non-idle command is first received
     if (is_non_idle_command(socket_commands) && !is_non_idle_command(prev_commands)) {
-        printf("Non-idle command detected, sending camera image...\n");
-        send_camera_image(g_client_socket, camera);
-        printf("Camera image sent in response to non-idle command\n");
+        printf("Non-idle command detected, sending 2D array...\n");
+        send_2d_array(camera);
     }
     
     // Update previous commands
     prev_commands = socket_commands;
 
-    // Debug: Print socket command state periodically
-    static int debug_counter = 0;
-    debug_counter++;
-    if (debug_counter % 1000 == 0) {  // Every ~10 seconds
-        printf("Socket commands - forward:%d backward:%d left:%d right:%d yaw_inc:%d yaw_dec:%d height_inc:%d height_dec:%d reset:%d\n",
-               socket_commands.forward, socket_commands.backward, socket_commands.left, socket_commands.right,
-               socket_commands.yaw_increase, socket_commands.yaw_decrease, socket_commands.height_diff_increase,
-               socket_commands.height_diff_decrease, socket_commands.reset_simulation);
-    }
-    
-    // Send camera image on startup (5 seconds after start)
+    // Send ready-up 2D array 7 seconds after startup
     static int startup_counter = 0;
     startup_counter++;
-    if (startup_counter == 500) {  // ~5 seconds after startup
-        printf("Attempting to send startup camera image...\n");
-        send_camera_image(g_client_socket, camera);
-        printf("Startup camera image attempt completed\n");
+    if (startup_counter == 700) {  // ~7 seconds after startup
+        printf("Sending ready-up 2D array...\n");
+        send_2d_array(camera);
     }
 
     // Control based on socket commands instead of keyboard
@@ -418,13 +392,14 @@ int main(int argc, char **argv) {
       height_diff_desired = -0.1;
     }
     if (socket_commands.reset_simulation) {
-      // Reset simulation logic could be added here
-      printf("Reset simulation requested\n");
+      // Reset simulation using supervisor
+      printf("Reset simulation requested - restarting simulation\n");
+      wb_supervisor_simulation_reset();
+      return 0;  // Exit the current instance
     }
     if (socket_commands.request_image) {
-      printf("Image request received, sending camera image...\n");
-      send_camera_image(g_client_socket, camera);
-      printf("Camera image sent in response to request\n");
+      printf("Array request received, sending 2D array...\n");
+      send_2d_array(camera);
     }
 
     height_desired += height_diff_desired * dt;
@@ -447,18 +422,6 @@ int main(int argc, char **argv) {
     wb_motor_set_velocity(m3_motor, -motor_power.m3);
     wb_motor_set_velocity(m4_motor, motor_power.m4);
 
-    // Reset command values to prevent accumulation from rapid socket commands
-    socket_commands.forward = 0;
-    socket_commands.backward = 0;
-    socket_commands.left = 0;
-    socket_commands.right = 0;
-    socket_commands.yaw_increase = 0;
-    socket_commands.yaw_decrease = 0;
-    socket_commands.height_diff_increase = 0;
-    socket_commands.height_diff_decrease = 0;
-    socket_commands.reset_simulation = 0;
-    socket_commands.request_image = 0;
-
     // Save past time for next time step
     past_time = wb_robot_get_time();
     past_x_global = x_global;
@@ -466,11 +429,8 @@ int main(int argc, char **argv) {
   };
 
   // Clean up socket
-  if (g_client_socket >= 0) {
-    close(g_client_socket);
-  }
-  if (server_socket >= 0) {
-    close(server_socket);
+  if (g_socket >= 0) {
+    close(g_socket);
   }
 
   wb_robot_cleanup();

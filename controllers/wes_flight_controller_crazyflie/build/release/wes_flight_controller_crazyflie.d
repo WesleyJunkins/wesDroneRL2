@@ -11,4 +11,6 @@ build/release/wes_flight_controller_crazyflie.o: \
   /Applications/Webots.app/Contents/include/controller/c/webots/motor.h \
   /Applications/Webots.app/Contents/include/controller/c/webots/robot.h \
   /Applications/Webots.app/Contents/include/controller/c/webots/nodes.h \
+  /Applications/Webots.app/Contents/include/controller/c/webots/supervisor.h \
+  /Applications/Webots.app/Contents/include/controller/c/webots/contact_point.h \
   pid_controller.h
