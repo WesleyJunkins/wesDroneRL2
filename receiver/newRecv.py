@@ -1,6 +1,36 @@
 import socket
 import time
 import numpy as np
+import json
+
+def send_command(client_socket, command_values):
+    """
+    Send a JSON command to the controller.
+    
+    Args:
+        client_socket: The socket connection to the controller
+        command_values: Array of 10 values [forward, backward, left, right, yaw_increase, 
+                        yaw_decrease, height_diff_increase, height_diff_decrease, 
+                        reset_simulation, reset_values]
+    """
+    # Create JSON command structure
+    command_json = {
+        "forward": command_values[0],
+        "backward": command_values[1], 
+        "left": command_values[2],
+        "right": command_values[3],
+        "yaw_increase": command_values[4],
+        "yaw_decrease": command_values[5],
+        "height_diff_increase": command_values[6],
+        "height_diff_decrease": command_values[7],
+        "reset_simulation": command_values[8],
+        "reset_values": command_values[9] # Also to stop the drones flight temporarily
+    }
+    
+    # Convert to JSON string and send
+    json_string = json.dumps(command_json)
+    client_socket.sendall(json_string.encode('utf-8'))
+    print(f"Sent command: {json_string}")
 
 # Define HOSTNAME and PORT
 hostname = 'localhost'
@@ -42,6 +72,12 @@ while True:
                         print(f"Data type: {array_2d.dtype}")
                         print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
                         print("-" * 50)
+
+                        # Send command to the controller
+                        send_command(client_socket, [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+
+                        # Wait for 0.5 seconds
+                        time.sleep(0.5)
                     elif len(response) > 0:
                         print(f"Received {len(response)} bytes (expected 4096)")
                         print(f"First few bytes: {response[:20]}")

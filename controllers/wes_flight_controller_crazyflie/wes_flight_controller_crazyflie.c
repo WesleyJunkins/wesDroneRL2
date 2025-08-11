@@ -66,7 +66,7 @@ typedef struct {
     int height_diff_increase;
     int height_diff_decrease;
     int reset_simulation;
-    int request_image;
+    int reset_values;
 } control_commands_json_t;
 
 // Global socket for communication
@@ -86,7 +86,7 @@ control_commands_json_t parse_control_json(const char* json_str) {
     if (strstr(json_str, "\"height_diff_increase\":1") || strstr(json_str, "\"height_diff_increase\": 1")) commands.height_diff_increase = 1;
     if (strstr(json_str, "\"height_diff_decrease\":1") || strstr(json_str, "\"height_diff_decrease\": 1")) commands.height_diff_decrease = 1;
     if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
-    if (strstr(json_str, "\"request_image\":1") || strstr(json_str, "\"request_image\": 1")) commands.request_image = 1;
+    if (strstr(json_str, "\"reset_values\":1") || strstr(json_str, "\"reset_values\": 1")) commands.reset_values = 1;
     
     return commands;
 }
@@ -173,7 +173,7 @@ void send_2d_array(WbDeviceTag camera) {
 int is_non_idle_command(control_commands_json_t commands) {
     return commands.forward || commands.backward || commands.left || commands.right ||
            commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase ||
-           commands.height_diff_decrease || commands.reset_simulation || commands.request_image;
+           commands.height_diff_decrease || commands.reset_simulation || commands.reset_values;
 }
 
 // Function to initialize socket connection
@@ -304,6 +304,16 @@ int main(int argc, char **argv) {
   printf("- Use Q and E to rotate around yaw\n ");
   printf("- Use W and S to go up and down\n");
   printf(" Socket communication enabled on port %d\n", SOCKET_PORT);
+  
+  //WES ADDED
+  int constant_forward = 0;
+  int constant_backward = 0;
+  int constant_left = 0;
+  int constant_right = 0;
+  int constant_yaw_increase = 0;
+  int constant_yaw_decrease = 0;
+  int constant_height_diff_increase = 0;
+  int constant_height_diff_decrease = 0;
 
   while (wb_robot_step(timestep) != -1) {
     const double dt = wb_robot_get_time() - past_time;
@@ -341,65 +351,102 @@ int main(int argc, char **argv) {
     // Check for incoming commands
     control_commands_json_t socket_commands = check_for_commands();
     
-    // Send 2D array when non-idle command is first received
-    if (is_non_idle_command(socket_commands) && !is_non_idle_command(prev_commands)) {
-        printf("Non-idle command detected, sending 2D array...\n");
-        send_2d_array(camera);
-    }
-    
     // Update previous commands
     prev_commands = socket_commands;
 
-    // Send ready-up 2D array 7 seconds after startup
+    // Send ready-up 2D array 5 seconds after startup
     static int startup_counter = 0;
     startup_counter++;
-    if (startup_counter == 700) {  // ~7 seconds after startup
+    if (startup_counter == 500) {  // ~7 seconds after startup
         printf("Sending ready-up 2D array...\n");
         send_2d_array(camera);
     }
 
-    // Control based on socket commands instead of keyboard
-    if (socket_commands.forward) {
-      printf("GO FORWARD - Setting forward_desired = +0.5\n");
-      forward_desired = +0.5;
-    }
-    if (socket_commands.backward) {
-      printf("GO BACKWARD - Setting forward_desired = -0.5\n");
-      forward_desired = -0.5;
-    }
-    if (socket_commands.right) {
-      printf("GO RIGHT - Setting sideways_desired = -0.5\n");
-      sideways_desired = -0.5;
-    }
-    if (socket_commands.left) {
-      printf("GO LEFT - Setting sideways_desired = +0.5\n");
-      sideways_desired = +0.5;
-    }
-    if (socket_commands.yaw_increase) {
-      printf("YAW INCREASE - Setting yaw_desired = 1.0\n");
-      yaw_desired = 1.0;
-    }
-    if (socket_commands.yaw_decrease) {
-      printf("YAW DECREASE - Setting yaw_desired = -1.0\n");
-      yaw_desired = -1.0;
-    }
-    if (socket_commands.height_diff_increase) {
-      printf("HEIGHT INCREASE - Setting height_diff_desired = 0.1\n");
-      height_diff_desired = 0.1;
-    }
-    if (socket_commands.height_diff_decrease) {
-      printf("HEIGHT DECREASE - Setting height_diff_desired = -0.1\n");
-      height_diff_desired = -0.1;
-    }
     if (socket_commands.reset_simulation) {
       // Reset simulation using supervisor
       printf("Reset simulation requested - restarting simulation\n");
+      
+      // Get reference to the current robot node
+      WbNodeRef robot_node = wb_supervisor_node_get_self();
+      
+      // Restart the simulation
       wb_supervisor_simulation_reset();
+      
+      // Restart this controller
+      wb_supervisor_node_restart_controller(robot_node);
+      
       return 0;  // Exit the current instance
     }
-    if (socket_commands.request_image) {
-      printf("Array request received, sending 2D array...\n");
-      send_2d_array(camera);
+    
+    //WES ADDED
+    if(socket_commands.forward == 1) {
+      constant_forward = 1;
+    }
+    if(socket_commands.backward == 1) {
+      constant_backward = 1;
+    }
+    if(socket_commands.right == 1) {
+      constant_right = 1;
+    }
+    if(socket_commands.left == 1) {
+      constant_left = 1;
+    }
+    if(socket_commands.yaw_increase == 1) {
+      constant_yaw_increase = 1;
+    }
+    if(socket_commands.yaw_decrease == 1) {
+      constant_yaw_decrease = 1;
+    }
+    if(socket_commands.height_diff_increase == 1) {
+      constant_height_diff_increase = 1;
+    }
+    if(socket_commands.height_diff_decrease == 1) {
+      constant_height_diff_decrease = 1;
+    }
+
+    // Control based on socket commands instead of keyboard
+    if (constant_forward == 1) {
+      printf("GO FORWARD - Setting forward_desired = +0.5\n");
+      forward_desired = +0.5;
+    }
+    if (constant_backward == 1) {
+      printf("GO BACKWARD - Setting forward_desired = -0.5\n");
+      forward_desired = -0.5;
+    }
+    if (constant_right == 1) {
+      printf("GO RIGHT - Setting sideways_desired = -0.5\n");
+      sideways_desired = -0.5;
+    }
+    if (constant_left == 1) {
+      printf("GO LEFT - Setting sideways_desired = +0.5\n");
+      sideways_desired = +0.5;
+    }
+    if (constant_yaw_increase == 1) {
+      printf("YAW INCREASE - Setting yaw_desired = 1.0\n");
+      yaw_desired = 1.0;
+    }
+    if (constant_yaw_decrease == 1) {
+      printf("YAW DECREASE - Setting yaw_desired = -1.0\n");
+      yaw_desired = -1.0;
+    }
+    if (constant_height_diff_increase == 1) {
+      printf("HEIGHT INCREASE - Setting height_diff_desired = 0.1\n");
+      height_diff_desired = 0.1;
+    }
+    if (constant_height_diff_decrease == 1) {
+      printf("HEIGHT DECREASE - Setting height_diff_desired = -0.1\n");
+      height_diff_desired = -0.1;
+    }
+    if (socket_commands.reset_values) {
+      printf("Resetting values (Stopping flight temporarily)\n");
+      constant_forward = 0;
+      constant_backward = 0;
+      constant_left = 0;
+      constant_right = 0;
+      constant_yaw_increase = 0;
+      constant_yaw_decrease = 0;
+      constant_height_diff_increase = 0;
+      constant_height_diff_decrease = 0;
     }
 
     height_desired += height_diff_desired * dt;
