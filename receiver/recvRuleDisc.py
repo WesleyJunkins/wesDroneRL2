@@ -9,29 +9,36 @@ import numpy as np
 import json
 
 # Function to take the array, and make sure the drone is still following the curve
-def process_array(array_2d):
+def process_array(array_2d, client_socket):
     """
-    Check if the curve is properly centered in the array.
+    Check if the curve is properly centered in the array and send appropriate commands.
     
     Args:
         array_2d: 2D numpy array (64x64) containing the curve data
+        client_socket: Socket connection to send commands to the controller
         
     Returns:
         bool: True if curve is properly centered, False otherwise
     """
+    # Initialize instruction list
+    instructions = []
+    
     # Check columns 0-19 (should be all 0's)
     for col in range(20):  # 0 to 19 inclusive
         if not np.all(array_2d[:, col] == 0):
             print(f"Check 1 failed: Column {col} contains non-zero values")
-            return False
+            instructions.append("backward")  # Move backward to get back on track
+            break
     
     # Check columns 43-63 (should be all 0's)
     for col in range(43, 64):  # 43 to 63 inclusive
         if not np.all(array_2d[:, col] == 0):
             print(f"Check 1 failed: Column {col} contains non-zero values")
-            return False
+            instructions.append("forward")  # Move forward to get back on track
+            break
     
-    print("Passed Check 1")
+    if not instructions:
+        print("Passed Check 1")
     
     # Check 2: Analyze columns 20-24 and 38-43 for turn direction
     # Check columns 20-24 (left side)
@@ -40,13 +47,15 @@ def process_array(array_2d):
         upper_half = array_2d[0:32, col]
         if not np.all(upper_half == 0):
             print("Needs to turn left")
-            return True
+            instructions.append("yaw_decrease")
+            break
         
         # Check lower half (rows 32-63)
         lower_half = array_2d[32:64, col]
         if not np.all(lower_half == 0):
             print("Needs to turn right")
-            return True
+            instructions.append("yaw_increase")
+            break
     
     # Check columns 38-43 (right side)
     for col in range(38, 44):  # 38 to 43 inclusive
@@ -54,21 +63,24 @@ def process_array(array_2d):
         upper_half = array_2d[0:32, col]
         if not np.all(upper_half == 0):
             print("Needs to turn right")
-            return True
+            instructions.append("yaw_increase")
+            break
         
         # Check lower half (rows 32-63)
         lower_half = array_2d[32:64, col]
         if not np.all(lower_half == 0):
             print("Needs to turn left")
-            return True
+            instructions.append("yaw_decrease")
+            break
     
-    print("Passed Check 2")
+    if not any("yaw" in inst for inst in instructions):
+        print("Passed Check 2")
     
     # Check 3: Analyze average values in center columns 31 and 32
     # Calculate average of all values in columns 31 and 32
     center_columns = np.concatenate([array_2d[:, 31], array_2d[:, 32]])
     average_value = np.mean(center_columns)
-    print(average_value)
+    print(f"Center average: {average_value}")
     
     if average_value < 2.0 or average_value > 4.0:
         print("Too off-centered")
@@ -78,13 +90,60 @@ def process_array(array_2d):
         
         if column_29_average < 0.5:
             print("Needs to shift left")
+            instructions.append("left")
         elif column_29_average > 1.0:
             print("Needs to shift right")
-        
-        return True
+            instructions.append("right")
     else:
         print("Passed Check 3")
-        return True
+    
+    # Send compiled instructions
+    send_instructions(client_socket, instructions)
+    
+    # Return True if no corrections needed, False if corrections were made
+    return len(instructions) == 0
+
+def send_instructions(client_socket, instructions):
+    """
+    Send compiled instructions as a single JSON command to the controller.
+    
+    Args:
+        client_socket: The socket connection to the controller
+        instructions: List of instruction strings (e.g., ["forward", "left", "yaw_increase"])
+    """
+    # Initialize command values array [forward, backward, left, right, yaw_increase, 
+    # yaw_decrease, height_diff_increase, height_diff_decrease, reset_simulation]
+    command_values = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    
+    # Map instructions to command values
+    for instruction in instructions:
+        if instruction == "forward":
+            command_values[0] = 1
+        elif instruction == "backward":
+            command_values[1] = 1
+        elif instruction == "left":
+            command_values[2] = 1
+        elif instruction == "right":
+            command_values[3] = 1
+        elif instruction == "yaw_increase":
+            command_values[4] = 1
+        elif instruction == "yaw_decrease":
+            command_values[5] = 1
+        elif instruction == "height_diff_increase":
+            command_values[6] = 1
+        elif instruction == "height_diff_decrease":
+            command_values[7] = 1
+        elif instruction == "reset_simulation":
+            command_values[8] = 1
+    
+    # Send the compiled command
+    send_command(client_socket, command_values)
+    
+    # Print summary of instructions sent
+    if instructions:
+        print(f"Sent instructions: {', '.join(instructions)}")
+    else:
+        print("No corrections needed - drone is on track")
 
 def send_command(client_socket, command_values):
     """
@@ -155,11 +214,8 @@ while True:
                         print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
                         print("-" * 50)
 
-                        # Process the array to check curve centering
-                        process_array(array_2d)
-
-                        # Send command to the controller
-                        send_command(client_socket, [0, 0, 0, 0, 0, 0, 0, 0, 1])
+                        # Process the array to check curve centering and send appropriate commands
+                        process_array(array_2d, client_socket)
 
                         # Wait for 0.5 seconds
                         time.sleep(0.5)
