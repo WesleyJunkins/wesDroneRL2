@@ -1,7 +1,90 @@
+# Receiver for the Webots drone controller
+# This receiver simulates a discrete-command interface
+#   Meaning it receives an array, processes it, and sends a single set of commands (increase speed, turn left, etc...) as opposed to continuously adjusting values based on the current state of the array.
+# By Wesley Junkins
+
 import socket
 import time
 import numpy as np
 import json
+
+# Function to take the array, and make sure the drone is still following the curve
+def process_array(array_2d):
+    """
+    Check if the curve is properly centered in the array.
+    
+    Args:
+        array_2d: 2D numpy array (64x64) containing the curve data
+        
+    Returns:
+        bool: True if curve is properly centered, False otherwise
+    """
+    # Check columns 0-19 (should be all 0's)
+    for col in range(20):  # 0 to 19 inclusive
+        if not np.all(array_2d[:, col] == 0):
+            print(f"Check 1 failed: Column {col} contains non-zero values")
+            return False
+    
+    # Check columns 43-63 (should be all 0's)
+    for col in range(43, 64):  # 43 to 63 inclusive
+        if not np.all(array_2d[:, col] == 0):
+            print(f"Check 1 failed: Column {col} contains non-zero values")
+            return False
+    
+    print("Passed Check 1")
+    
+    # Check 2: Analyze columns 20-24 and 38-43 for turn direction
+    # Check columns 20-24 (left side)
+    for col in range(20, 25):  # 20 to 25 inclusive
+        # Check upper half (rows 0-31)
+        upper_half = array_2d[0:32, col]
+        if not np.all(upper_half == 0):
+            print("Needs to turn left")
+            return True
+        
+        # Check lower half (rows 32-63)
+        lower_half = array_2d[32:64, col]
+        if not np.all(lower_half == 0):
+            print("Needs to turn right")
+            return True
+    
+    # Check columns 38-43 (right side)
+    for col in range(38, 44):  # 38 to 43 inclusive
+        # Check upper half (rows 0-31)
+        upper_half = array_2d[0:32, col]
+        if not np.all(upper_half == 0):
+            print("Needs to turn right")
+            return True
+        
+        # Check lower half (rows 32-63)
+        lower_half = array_2d[32:64, col]
+        if not np.all(lower_half == 0):
+            print("Needs to turn left")
+            return True
+    
+    print("Passed Check 2")
+    
+    # Check 3: Analyze average values in center columns 31 and 32
+    # Calculate average of all values in columns 31 and 32
+    center_columns = np.concatenate([array_2d[:, 31], array_2d[:, 32]])
+    average_value = np.mean(center_columns)
+    print(average_value)
+    
+    if average_value < 2.0 or average_value > 4.0:
+        print("Too off-centered")
+        
+        # Additional check: analyze column 29 for directional feedback
+        column_29_average = np.mean(array_2d[:, 29])
+        
+        if column_29_average < 0.5:
+            print("Needs to shift left")
+        elif column_29_average > 1.0:
+            print("Needs to shift right")
+        
+        return True
+    else:
+        print("Passed Check 3")
+        return True
 
 def send_command(client_socket, command_values):
     """
@@ -9,9 +92,9 @@ def send_command(client_socket, command_values):
     
     Args:
         client_socket: The socket connection to the controller
-        command_values: Array of 10 values [forward, backward, left, right, yaw_increase, 
+        command_values: Array of 9 values [forward, backward, left, right, yaw_increase, 
                         yaw_decrease, height_diff_increase, height_diff_decrease, 
-                        reset_simulation, reset_values]
+                        reset_simulation]
     """
     # Create JSON command structure
     command_json = {
@@ -23,8 +106,7 @@ def send_command(client_socket, command_values):
         "yaw_decrease": command_values[5],
         "height_diff_increase": command_values[6],
         "height_diff_decrease": command_values[7],
-        "reset_simulation": command_values[8],
-        "reset_values": command_values[9] # Also to stop the drones flight temporarily
+        "reset_simulation": command_values[8]
     }
     
     # Convert to JSON string and send
@@ -73,8 +155,11 @@ while True:
                         print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
                         print("-" * 50)
 
+                        # Process the array to check curve centering
+                        process_array(array_2d)
+
                         # Send command to the controller
-                        send_command(client_socket, [0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+                        send_command(client_socket, [0, 0, 0, 0, 0, 0, 0, 0, 1])
 
                         # Wait for 0.5 seconds
                         time.sleep(0.5)

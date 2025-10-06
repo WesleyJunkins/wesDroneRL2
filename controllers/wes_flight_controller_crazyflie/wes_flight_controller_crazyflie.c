@@ -66,7 +66,6 @@ typedef struct {
     int height_diff_increase;
     int height_diff_decrease;
     int reset_simulation;
-    int reset_values;
 } control_commands_json_t;
 
 // Global socket for communication
@@ -86,7 +85,6 @@ control_commands_json_t parse_control_json(const char* json_str) {
     if (strstr(json_str, "\"height_diff_increase\":1") || strstr(json_str, "\"height_diff_increase\": 1")) commands.height_diff_increase = 1;
     if (strstr(json_str, "\"height_diff_decrease\":1") || strstr(json_str, "\"height_diff_decrease\": 1")) commands.height_diff_decrease = 1;
     if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
-    if (strstr(json_str, "\"reset_values\":1") || strstr(json_str, "\"reset_values\": 1")) commands.reset_values = 1;
     
     return commands;
 }
@@ -173,7 +171,7 @@ void send_2d_array(WbDeviceTag camera) {
 int is_non_idle_command(control_commands_json_t commands) {
     return commands.forward || commands.backward || commands.left || commands.right ||
            commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase ||
-           commands.height_diff_decrease || commands.reset_simulation || commands.reset_values;
+           commands.height_diff_decrease || commands.reset_simulation;
 }
 
 // Function to initialize socket connection
@@ -305,15 +303,7 @@ int main(int argc, char **argv) {
   printf("- Use W and S to go up and down\n");
   printf(" Socket communication enabled on port %d\n", SOCKET_PORT);
   
-  //WES ADDED
-  int constant_forward = 0;
-  int constant_backward = 0;
-  int constant_left = 0;
-  int constant_right = 0;
-  int constant_yaw_increase = 0;
-  int constant_yaw_decrease = 0;
-  int constant_height_diff_increase = 0;
-  int constant_height_diff_decrease = 0;
+  //WES ADDED - Commands are now executed once per received command
 
   while (wb_robot_step(timestep) != -1) {
     const double dt = wb_robot_get_time() - past_time;
@@ -351,9 +341,6 @@ int main(int argc, char **argv) {
     // Check for incoming commands
     control_commands_json_t socket_commands = check_for_commands();
     
-    // Update previous commands
-    prev_commands = socket_commands;
-
     // Send ready-up 2D array 5 seconds after startup
     static int startup_counter = 0;
     startup_counter++;
@@ -362,112 +349,108 @@ int main(int argc, char **argv) {
         send_2d_array(camera);
     }
 
-    if (socket_commands.reset_simulation) {
-      // Reset simulation using supervisor
-      printf("Reset simulation requested - restarting simulation\n");
-      
-      // Get reference to the current robot node
-      WbNodeRef robot_node = wb_supervisor_node_get_self();
-      
-      // Restart the simulation
-      wb_supervisor_simulation_reset();
-      
-      // Restart this controller
-      wb_supervisor_node_restart_controller(robot_node);
-      
-      return 0;  // Exit the current instance
-    }
-    
-    //WES ADDED
-    if(socket_commands.forward == 1) {
-      constant_forward = 1;
-    }
-    if(socket_commands.backward == 1) {
-      constant_backward = 1;
-    }
-    if(socket_commands.right == 1) {
-      constant_right = 1;
-    }
-    if(socket_commands.left == 1) {
-      constant_left = 1;
-    }
-    if(socket_commands.yaw_increase == 1) {
-      constant_yaw_increase = 1;
-    }
-    if(socket_commands.yaw_decrease == 1) {
-      constant_yaw_decrease = 1;
-    }
-    if(socket_commands.height_diff_increase == 1) {
-      constant_height_diff_increase = 1;
-    }
-    if(socket_commands.height_diff_decrease == 1) {
-      constant_height_diff_decrease = 1;
-    }
+    // Check if we received any commands
+    if (is_non_idle_command(socket_commands)) {
+        printf("Received command, executing once and sending new array...\n");
+        
+        if (socket_commands.reset_simulation) {
+            // Reset simulation using supervisor
+            printf("Reset simulation requested - restarting simulation\n");
+            
+            // Get reference to the current robot node
+            WbNodeRef robot_node = wb_supervisor_node_get_self();
+            
+            // Restart the simulation
+            wb_supervisor_simulation_reset();
+            
+            // Restart this controller
+            wb_supervisor_node_restart_controller(robot_node);
+            
+            return 0;  // Exit the current instance
+        }
+        
+        // Execute movement commands once
+        if (socket_commands.forward == 1) {
+            printf("GO FORWARD - Setting forward_desired = +0.5\n");
+            forward_desired = +0.5;
+        }
+        if (socket_commands.backward == 1) {
+            printf("GO BACKWARD - Setting forward_desired = -0.5\n");
+            forward_desired = -0.5;
+        }
+        if (socket_commands.right == 1) {
+            printf("GO RIGHT - Setting sideways_desired = -0.5\n");
+            sideways_desired = -0.5;
+        }
+        if (socket_commands.left == 1) {
+            printf("GO LEFT - Setting sideways_desired = +0.5\n");
+            sideways_desired = +0.5;
+        }
+        if (socket_commands.yaw_increase == 1) {
+            printf("YAW INCREASE - Setting yaw_desired = 1.0\n");
+            yaw_desired = 1.0;
+        }
+        if (socket_commands.yaw_decrease == 1) {
+            printf("YAW DECREASE - Setting yaw_desired = -1.0\n");
+            yaw_desired = -1.0;
+        }
+        if (socket_commands.height_diff_increase == 1) {
+            printf("HEIGHT INCREASE - Setting height_diff_desired = 0.1\n");
+            height_diff_desired = 0.1;
+        }
+        if (socket_commands.height_diff_decrease == 1) {
+            printf("HEIGHT DECREASE - Setting height_diff_desired = -0.1\n");
+            height_diff_desired = -0.1;
+        }
+        
+        // Execute the command for one timestep, then send new array
+        height_desired += height_diff_desired * dt;
+        desired_state.yaw_rate = yaw_desired;
+        desired_state.vy = sideways_desired;
+        desired_state.vx = forward_desired;
+        desired_state.altitude = height_desired;
+        pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
 
-    // Control based on socket commands instead of keyboard
-    if (constant_forward == 1) {
-      printf("GO FORWARD - Setting forward_desired = +0.5\n");
-      forward_desired = +0.5;
+        // Setting motorspeed
+        wb_motor_set_velocity(m1_motor, -motor_power.m1);
+        wb_motor_set_velocity(m2_motor, motor_power.m2);
+        wb_motor_set_velocity(m3_motor, -motor_power.m3);
+        wb_motor_set_velocity(m4_motor, motor_power.m4);
+        
+        // Wait a moment for the command to take effect, then send new array
+        for (int i = 0; i < 10; i++) {
+            wb_robot_step(timestep);
+        }
+        
+        // Send new 2D array after executing command
+        printf("Sending new 2D array after command execution...\n");
+        send_2d_array(camera);
+        
+        // Reset command values for next iteration
+        forward_desired = 0;
+        sideways_desired = 0;
+        yaw_desired = 0;
+        height_diff_desired = 0;
     }
-    if (constant_backward == 1) {
-      printf("GO BACKWARD - Setting forward_desired = -0.5\n");
-      forward_desired = -0.5;
-    }
-    if (constant_right == 1) {
-      printf("GO RIGHT - Setting sideways_desired = -0.5\n");
-      sideways_desired = -0.5;
-    }
-    if (constant_left == 1) {
-      printf("GO LEFT - Setting sideways_desired = +0.5\n");
-      sideways_desired = +0.5;
-    }
-    if (constant_yaw_increase == 1) {
-      printf("YAW INCREASE - Setting yaw_desired = 1.0\n");
-      yaw_desired = 1.0;
-    }
-    if (constant_yaw_decrease == 1) {
-      printf("YAW DECREASE - Setting yaw_desired = -1.0\n");
-      yaw_desired = -1.0;
-    }
-    if (constant_height_diff_increase == 1) {
-      printf("HEIGHT INCREASE - Setting height_diff_desired = 0.1\n");
-      height_diff_desired = 0.1;
-    }
-    if (constant_height_diff_decrease == 1) {
-      printf("HEIGHT DECREASE - Setting height_diff_desired = -0.1\n");
-      height_diff_desired = -0.1;
-    }
-    if (socket_commands.reset_values) {
-      printf("Resetting values (Stopping flight temporarily)\n");
-      constant_forward = 0;
-      constant_backward = 0;
-      constant_left = 0;
-      constant_right = 0;
-      constant_yaw_increase = 0;
-      constant_yaw_decrease = 0;
-      constant_height_diff_increase = 0;
-      constant_height_diff_decrease = 0;
-    }
-
-    height_desired += height_diff_desired * dt;
 
     // Example how to get sensor data
     // range_front_value = wb_distance_sensor_get_value(range_front));
     // const unsigned char *image = wb_camera_get_image(camera);
 
-    desired_state.yaw_rate = yaw_desired;
+    // PID velocity controller with fixed height (only when no commands received)
+    if (!is_non_idle_command(socket_commands)) {
+        desired_state.yaw_rate = yaw_desired;
+        desired_state.vy = sideways_desired;
+        desired_state.vx = forward_desired;
+        desired_state.altitude = height_desired;
+        pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
 
-    // PID velocity controller with fixed height
-    desired_state.vy = sideways_desired;
-    desired_state.vx = forward_desired;
-    desired_state.altitude = height_desired;
-    pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
-
-    // Setting motorspeed
-    wb_motor_set_velocity(m1_motor, -motor_power.m1);
-    wb_motor_set_velocity(m2_motor, motor_power.m2);
-    wb_motor_set_velocity(m3_motor, -motor_power.m3);
-    wb_motor_set_velocity(m4_motor, motor_power.m4);
+        // Setting motorspeed
+        wb_motor_set_velocity(m1_motor, -motor_power.m1);
+        wb_motor_set_velocity(m2_motor, motor_power.m2);
+        wb_motor_set_velocity(m3_motor, -motor_power.m3);
+        wb_motor_set_velocity(m4_motor, motor_power.m4);
+    }
 
     // Save past time for next time step
     past_time = wb_robot_get_time();
