@@ -23,86 +23,55 @@ def process_array(array_2d, client_socket):
     # Initialize instruction list
     instructions = []
     
-    # DEBUG: Print array statistics
-    print(f"=== ARRAY ANALYSIS DEBUG ===")
-    print(f"Array shape: {array_2d.shape}")
-    print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
-    print(f"Mean value: {np.mean(array_2d):.3f}")
-    print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
-    
     # Check columns 0-19 (should be all 0's)
-    left_side_issue = False
     for col in range(20):  # 0 to 19 inclusive
         if not np.all(array_2d[:, col] == 0):
             print(f"Check 1 failed: Column {col} contains non-zero values")
-            left_side_issue = True
+            instructions.append("backward")  # Move backward to get back on track
             break
     
     # Check columns 43-63 (should be all 0's)
-    right_side_issue = False
     for col in range(43, 64):  # 43 to 63 inclusive
         if not np.all(array_2d[:, col] == 0):
             print(f"Check 1 failed: Column {col} contains non-zero values")
-            right_side_issue = True
+            instructions.append("forward")  # Move forward to get back on track
             break
-    
-    # Add only one movement command based on which side has issues
-    if left_side_issue and not right_side_issue:
-        instructions.append("backward")  # Move backward to get back on track
-    elif right_side_issue and not left_side_issue:
-        instructions.append("forward")  # Move forward to get back on track
-    elif left_side_issue and right_side_issue:
-        # Both sides have issues - need to center first, don't add movement command
-        print("Both sides have issues - skipping forward/backward movement")
     
     if not instructions:
         print("Passed Check 1")
     
     # Check 2: Analyze columns 20-24 and 38-43 for turn direction
-    yaw_correction_needed = False
-    yaw_direction = None
-    
     # Check columns 20-24 (left side)
     for col in range(20, 25):  # 20 to 25 inclusive
         # Check upper half (rows 0-31)
         upper_half = array_2d[0:32, col]
         if not np.all(upper_half == 0):
             print("Needs to turn left")
-            yaw_correction_needed = True
-            yaw_direction = "yaw_decrease"
+            instructions.append("yaw_decrease")
             break
         
         # Check lower half (rows 32-63)
         lower_half = array_2d[32:64, col]
         if not np.all(lower_half == 0):
             print("Needs to turn right")
-            yaw_correction_needed = True
-            yaw_direction = "yaw_increase"
+            instructions.append("yaw_increase")
             break
     
-    # Only check right side if no yaw correction was found on left side
-    if not yaw_correction_needed:
-        # Check columns 38-43 (right side)
-        for col in range(38, 44):  # 38 to 43 inclusive
-            # Check upper half (rows 0-31)
-            upper_half = array_2d[0:32, col]
-            if not np.all(upper_half == 0):
-                print("Needs to turn right")
-                yaw_correction_needed = True
-                yaw_direction = "yaw_increase"
-                break
-            
-            # Check lower half (rows 32-63)
-            lower_half = array_2d[32:64, col]
-            if not np.all(lower_half == 0):
-                print("Needs to turn left")
-                yaw_correction_needed = True
-                yaw_direction = "yaw_decrease"
-                break
-    
-    # Add yaw correction if needed
-    if yaw_correction_needed and yaw_direction:
-        instructions.append(yaw_direction)
+    # Check columns 38-43 (right side)
+    for col in range(38, 44):  # 38 to 43 inclusive
+        # Check upper half (rows 0-31)
+        upper_half = array_2d[0:32, col]
+        if not np.all(upper_half == 0):
+            print("Needs to turn right")
+            instructions.append("yaw_increase")
+            break
+        
+        # Check lower half (rows 32-63)
+        lower_half = array_2d[32:64, col]
+        if not np.all(lower_half == 0):
+            print("Needs to turn left")
+            instructions.append("yaw_decrease")
+            break
     
     if not any("yaw" in inst for inst in instructions):
         print("Passed Check 2")
@@ -111,19 +80,13 @@ def process_array(array_2d, client_socket):
     # Calculate average of all values in columns 31 and 32
     center_columns = np.concatenate([array_2d[:, 31], array_2d[:, 32]])
     average_value = np.mean(center_columns)
-    print(f"Center average: {average_value:.3f}")
-    
-    # DEBUG: Print detailed center analysis
-    col_31_avg = np.mean(array_2d[:, 31])
-    col_32_avg = np.mean(array_2d[:, 32])
-    print(f"DEBUG: Column 31 avg: {col_31_avg:.3f}, Column 32 avg: {col_32_avg:.3f}")
+    print(f"Center average: {average_value}")
     
     if average_value < 2.0 or average_value > 4.0:
         print("Too off-centered")
         
         # Additional check: analyze column 29 for directional feedback
         column_29_average = np.mean(array_2d[:, 29])
-        print(f"DEBUG: Column 29 average: {column_29_average:.3f}")
         
         if column_29_average < 0.5:
             print("Needs to shift left")
@@ -134,35 +97,11 @@ def process_array(array_2d, client_socket):
     else:
         print("Passed Check 3")
     
-    # If all checks passed (no corrections needed), send forward command
-    if len(instructions) == 0:
-        print("All checks passed - sending forward command")
-        instructions.append("forward")
-    
-    # PRIORITY SYSTEM: Only send the most important command
-    # Priority order: 1) Yaw correction, 2) Left/Right shift, 3) Forward/Backward
-    priority_instructions = []
-    
-    # Check for yaw corrections first (highest priority)
-    yaw_commands = [inst for inst in instructions if "yaw" in inst]
-    if yaw_commands:
-        priority_instructions.append(yaw_commands[0])  # Take first yaw command
-    else:
-        # Check for left/right corrections (medium priority)
-        lateral_commands = [inst for inst in instructions if inst in ["left", "right"]]
-        if lateral_commands:
-            priority_instructions.append(lateral_commands[0])  # Take first lateral command
-        else:
-            # Check for forward/backward corrections (lowest priority)
-            forward_commands = [inst for inst in instructions if inst in ["forward", "backward"]]
-            if forward_commands:
-                priority_instructions.append(forward_commands[0])  # Take first forward command
-    
-    # Send only the highest priority instruction
-    send_instructions(client_socket, priority_instructions)
+    # Send compiled instructions
+    send_instructions(client_socket, instructions)
     
     # Return True if no corrections needed, False if corrections were made
-    return len(instructions) == 1 and instructions[0] == "forward"
+    return len(instructions) == 0
 
 def send_instructions(client_socket, instructions):
     """
@@ -266,14 +205,14 @@ while True:
                     if len(response) == 4096:
                         # Convert binary data to numpy array
                         array_2d = np.frombuffer(response, dtype=np.int8).reshape((64, 64))
-                        # print(f"Received 2D array (64x64):")
+                        print(f"Received 2D array (64x64):")
                         # Set numpy to print full array without truncation
-                        # np.set_printoptions(threshold=np.inf, linewidth=130)
-                        # print(array_2d)
-                        # print(f"Array shape: {array_2d.shape}")
-                        # print(f"Data type: {array_2d.dtype}")
-                        # print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
-                        # print("-" * 50)
+                        np.set_printoptions(threshold=np.inf, linewidth=130)
+                        print(array_2d)
+                        print(f"Array shape: {array_2d.shape}")
+                        print(f"Data type: {array_2d.dtype}")
+                        print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
+                        print("-" * 50)
 
                         # Process the array to check curve centering and send appropriate commands
                         process_array(array_2d, client_socket)

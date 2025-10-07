@@ -65,7 +65,7 @@
 ###
 ###-----------------------------------------------------------------------------
 
-C_SOURCES = wes_flight_controller_crazyflie.c pid_controller.c
+C_SOURCES = cont_wes_flight_controller_crazyflie.c disc_wes_flight_controller_crazyflie.c pid_controller.c
 
 ### Do not modify: this includes Webots global Makefile.include
 null :=
