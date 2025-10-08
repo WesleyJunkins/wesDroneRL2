@@ -138,28 +138,12 @@ def process_array(array_2d, client_socket):
     if len(instructions) == 0:
         print("All checks passed - sending forward command")
         instructions.append("forward")
+
+    # TESTING INSTRUCTIONS
+    instructions = ["forward", "right", "yaw_increase"]
     
-    # PRIORITY SYSTEM: Only send the most important command
-    # Priority order: 1) Yaw correction, 2) Left/Right shift, 3) Forward/Backward
-    priority_instructions = []
-    
-    # Check for yaw corrections first (highest priority)
-    yaw_commands = [inst for inst in instructions if "yaw" in inst]
-    if yaw_commands:
-        priority_instructions.append(yaw_commands[0])  # Take first yaw command
-    else:
-        # Check for left/right corrections (medium priority)
-        lateral_commands = [inst for inst in instructions if inst in ["left", "right"]]
-        if lateral_commands:
-            priority_instructions.append(lateral_commands[0])  # Take first lateral command
-        else:
-            # Check for forward/backward corrections (lowest priority)
-            forward_commands = [inst for inst in instructions if inst in ["forward", "backward"]]
-            if forward_commands:
-                priority_instructions.append(forward_commands[0])  # Take first forward command
-    
-    # Send only the highest priority instruction
-    send_instructions(client_socket, priority_instructions)
+    # Send all instructions (no priority filtering)
+    send_instructions(client_socket, instructions)
     
     # Return True if no corrections needed, False if corrections were made
     return len(instructions) == 1 and instructions[0] == "forward"
@@ -266,20 +250,28 @@ while True:
                     if len(response) == 4096:
                         # Convert binary data to numpy array
                         array_2d = np.frombuffer(response, dtype=np.int8).reshape((64, 64))
-                        # print(f"Received 2D array (64x64):")
-                        # Set numpy to print full array without truncation
-                        # np.set_printoptions(threshold=np.inf, linewidth=130)
-                        # print(array_2d)
-                        # print(f"Array shape: {array_2d.shape}")
-                        # print(f"Data type: {array_2d.dtype}")
-                        # print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
-                        # print("-" * 50)
+                        
+                        print(f"\n=== RECEIVER RECEIVED 2D ARRAY (64x64) ===")
+                        print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
+                        print("-" * 130)
+                        
+                        # Print the entire array
+                        for y in range(64):
+                            row_str = ""
+                            for x in range(64):
+                                row_str += f"{array_2d[y, x]} "
+                            print(row_str)
+                        
+                        print("-" * 130)
+                        print(f"Array shape: {array_2d.shape}")
+                        print(f"Data type: {array_2d.dtype}")
+                        print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
+                        print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
 
                         # Process the array to check curve centering and send appropriate commands
                         process_array(array_2d, client_socket)
 
-                        # Wait for 0.5 seconds
-                        time.sleep(0.5)
+                        # No delay - send commands immediately after processing
                     elif len(response) > 0:
                         print(f"Received {len(response)} bytes (expected 4096)")
                         print(f"First few bytes: {response[:20]}")

@@ -27,26 +27,26 @@
  * Author:      Kimberly McGuire (Bitcraze AB)
  */
 
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdint.h>
-
-#include <webots/camera.h>
-#include <webots/distance_sensor.h>
-#include <webots/gps.h>
-#include <webots/gyro.h>
-#include <webots/inertial_unit.h>
-#include <webots/keyboard.h>
-#include <webots/motor.h>
-#include <webots/robot.h>
-#include <webots/supervisor.h>
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <fcntl.h>
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <arpa/inet.h>
+ #include <stdint.h>
+ 
+ #include <webots/camera.h>
+ #include <webots/distance_sensor.h>
+ #include <webots/gps.h>
+ #include <webots/gyro.h>
+ #include <webots/inertial_unit.h>
+ #include <webots/keyboard.h>
+ #include <webots/motor.h>
+ #include <webots/robot.h>
+ #include <webots/supervisor.h>
 
 // Add external controller
 #include "pid_controller.h"
@@ -54,8 +54,6 @@
 #define FLYING_ALTITUDE 1.0
 #define SOCKET_PORT 8080
 #define BUFFER_SIZE 1024
-#define MAX_MOTOR_SPEED 500.0  // Maximum safe motor speed (below 600 limit)
-#define MIN_MOTOR_SPEED -500.0 // Minimum safe motor speed
 
 // Structure to hold control commands from JSON
 typedef struct {
@@ -72,24 +70,6 @@ typedef struct {
 
 // Global socket for communication
 static int g_socket = -1;
-
-// Function to parse JSON control commands
-control_commands_json_t parse_control_json(const char* json_str) {
-    control_commands_json_t commands = {0};
-    
-    // More robust JSON parsing - handle spaces and different formats
-    if (strstr(json_str, "\"forward\":1") || strstr(json_str, "\"forward\": 1")) commands.forward = 1;
-    if (strstr(json_str, "\"backward\":1") || strstr(json_str, "\"backward\": 1")) commands.backward = 1;
-    if (strstr(json_str, "\"left\":1") || strstr(json_str, "\"left\": 1")) commands.left = 1;
-    if (strstr(json_str, "\"right\":1") || strstr(json_str, "\"right\": 1")) commands.right = 1;
-    if (strstr(json_str, "\"yaw_increase\":1") || strstr(json_str, "\"yaw_increase\": 1")) commands.yaw_increase = 1;
-    if (strstr(json_str, "\"yaw_decrease\":1") || strstr(json_str, "\"yaw_decrease\": 1")) commands.yaw_decrease = 1;
-    if (strstr(json_str, "\"height_diff_increase\":1") || strstr(json_str, "\"height_diff_increase\": 1")) commands.height_diff_increase = 1;
-    if (strstr(json_str, "\"height_diff_decrease\":1") || strstr(json_str, "\"height_diff_decrease\": 1")) commands.height_diff_decrease = 1;
-    if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
-    
-    return commands;
-}
 
 // Function to convert RGBA image to grayscale brightness values (0-255)
 int get_brightness(const unsigned char *rgba_pixel) {
@@ -142,23 +122,23 @@ void send_2d_array(WbDeviceTag camera) {
         }
     }
     
-    // Print the 2D array to console (commented out for cleaner output)
-    // printf("\n2D Array (%dx%d) before sending:\n", width, height);
-    // printf("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white\n");
-    // printf("-");
-    // for (int i = 0; i < width * 2 + 8; i++) printf("-");
-    // printf("\n");
-    // 
-    // for (int y = 0; y < height; y++) {
-    //     for (int x = 0; x < width; x++) {
-    //         printf("%d ", array_2d[y * width + x]);
-    //     }
-    //     printf("\n");
-    // }
-    // 
-    // printf("-");
-    // for (int i = 0; i < width * 2 + 8; i++) printf("-");
-    // printf("\n");
+    // Print the 2D array before sending
+    printf("\n=== CONTROLLER SENDING 2D ARRAY (%dx%d) ===\n", width, height);
+    printf("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white\n");
+    printf("-");
+    for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    printf("\n");
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            printf("%d ", array_2d[y * width + x]);
+        }
+        printf("\n");
+    }
+    
+    printf("-");
+    for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    printf("\n");
     
     // Send array data to port
     int array_size = width * height * sizeof(int8_t);
@@ -169,24 +149,38 @@ void send_2d_array(WbDeviceTag camera) {
     free(array_2d);
 }
 
-// Function to clamp motor speed to safe limits
-double clamp_motor_speed(double speed) {
-    if (speed > MAX_MOTOR_SPEED) {
-        printf("WARNING: Motor speed %.2f clamped to %.2f\n", speed, MAX_MOTOR_SPEED);
-        return MAX_MOTOR_SPEED;
-    }
-    if (speed < MIN_MOTOR_SPEED) {
-        printf("WARNING: Motor speed %.2f clamped to %.2f\n", speed, MIN_MOTOR_SPEED);
-        return MIN_MOTOR_SPEED;
-    }
-    return speed;
+// Function to parse JSON control commands
+control_commands_json_t parse_control_json(const char* json_str) {
+    control_commands_json_t commands = {0};
+    
+    // More robust JSON parsing - handle spaces and different formats
+    if (strstr(json_str, "\"forward\":1") || strstr(json_str, "\"forward\": 1")) commands.forward = 1;
+    if (strstr(json_str, "\"backward\":1") || strstr(json_str, "\"backward\": 1")) commands.backward = 1;
+    if (strstr(json_str, "\"left\":1") || strstr(json_str, "\"left\": 1")) commands.left = 1;
+    if (strstr(json_str, "\"right\":1") || strstr(json_str, "\"right\": 1")) commands.right = 1;
+    if (strstr(json_str, "\"yaw_increase\":1") || strstr(json_str, "\"yaw_increase\": 1")) commands.yaw_increase = 1;
+    if (strstr(json_str, "\"yaw_decrease\":1") || strstr(json_str, "\"yaw_decrease\": 1")) commands.yaw_decrease = 1;
+    if (strstr(json_str, "\"height_diff_increase\":1") || strstr(json_str, "\"height_diff_increase\": 1")) commands.height_diff_increase = 1;
+    if (strstr(json_str, "\"height_diff_decrease\":1") || strstr(json_str, "\"height_diff_decrease\": 1")) commands.height_diff_decrease = 1;
+    if (strstr(json_str, "\"reset_simulation\":1") || strstr(json_str, "\"reset_simulation\": 1")) commands.reset_simulation = 1;
+    
+    return commands;
 }
 
-// Function to check if commands are non-idle (any command is active)
-int is_non_idle_command(control_commands_json_t commands) {
-    return commands.forward || commands.backward || commands.left || commands.right ||
-           commands.yaw_increase || commands.yaw_decrease || commands.height_diff_increase ||
-           commands.height_diff_decrease || commands.reset_simulation;
+// Function to check for incoming commands
+control_commands_json_t check_for_commands() {
+    control_commands_json_t commands = {0};
+    char buffer[BUFFER_SIZE];
+    
+    if (g_socket >= 0) {
+        int bytes_received = recv(g_socket, buffer, BUFFER_SIZE - 1, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';
+            commands = parse_control_json(buffer);
+        }
+    }
+    
+    return commands;
 }
 
 // Function to initialize socket connection
@@ -216,21 +210,6 @@ int init_socket_connection() {
     return g_socket;
 }
 
-// Function to check for incoming commands
-control_commands_json_t check_for_commands() {
-    control_commands_json_t commands = {0};
-    char buffer[BUFFER_SIZE];
-    
-    if (g_socket >= 0) {
-        int bytes_received = recv(g_socket, buffer, BUFFER_SIZE - 1, 0);
-        if (bytes_received > 0) {
-            buffer[bytes_received] = '\0';
-            commands = parse_control_json(buffer);
-        }
-    }
-    
-    return commands;
-}
 
 int main(int argc, char **argv) {
   wb_robot_init();
@@ -292,8 +271,8 @@ int main(int argc, char **argv) {
   gains_pid.kd_att_y = 0.5;
   gains_pid.kp_att_rp = 0.5;
   gains_pid.kd_att_rp = 0.1;
-  gains_pid.kp_vel_xy = 0.2;  // Reduced from 2 to 0.2 (10x reduction)
-  gains_pid.kd_vel_xy = 0.05; // Reduced from 0.5 to 0.05 (10x reduction)
+  gains_pid.kp_vel_xy = 2;
+  gains_pid.kd_vel_xy = 0.5;
   gains_pid.kp_z = 10;
   gains_pid.ki_z = 5;
   gains_pid.kd_z = 5;
@@ -303,22 +282,10 @@ int main(int argc, char **argv) {
 
   // Initialize struct for motor power
   motor_power_t motor_power;
-  
-  // Track previous command state for image sending
-  control_commands_json_t prev_commands = {0};
 
   printf("\n");
 
-  printf("====== Controls =======\n");
-
-  printf(" The Crazyflie can be controlled from your keyboard!\n");
-  printf(" All controllable movement is in body coordinates\n");
-  printf("- Use the up, back, right and left button to move in the horizontal plane\n");
-  printf("- Use Q and E to rotate around yaw\n ");
-  printf("- Use W and S to go up and down\n");
-  printf(" Socket communication enabled on port %d\n", SOCKET_PORT);
-  
-  //WES ADDED - Commands are now executed once per received command
+  printf("====== Active =======\n");
 
   while (wb_robot_step(timestep) != -1) {
     const double dt = wb_robot_get_time() - past_time;
@@ -353,148 +320,112 @@ int main(int argc, char **argv) {
     double yaw_desired = 0;
     double height_diff_desired = 0;
 
-    // Check for incoming commands
-    control_commands_json_t socket_commands = check_for_commands();
-    
-    // Send ready-up 2D array 5 seconds after startup
+    // Send ready-up 2D array 5 seconds after startup (allow drone to get in air)
     static int startup_counter = 0;
     startup_counter++;
-    if (startup_counter == 500) {  // ~7 seconds after startup
-        printf("Sending ready-up 2D array...\n");
+    if (startup_counter == 500) {  // ~5 seconds after startup (500 * 10ms timestep)
+        printf("Sending ready-up 2D array (drone should be in air)...\n");
         send_2d_array(camera);
     }
 
-    // Check if we received any commands
-    if (is_non_idle_command(socket_commands)) {
-        printf("Received command, executing once and sending new array...\n");
+    // Static array to hold the last received commands (persists between iterations)
+    static int active_commands[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    static int command_received = 0;  // Flag to track if a command was received and needs processing
+    
+    // Check for incoming commands from the socket
+    control_commands_json_t socket_commands = check_for_commands();
+    
+    // Update active_commands array only if we received new commands
+    if (socket_commands.forward || socket_commands.backward || socket_commands.left || 
+        socket_commands.right || socket_commands.yaw_increase || socket_commands.yaw_decrease ||
+        socket_commands.height_diff_increase || socket_commands.height_diff_decrease) {
         
-        if (socket_commands.reset_simulation) {
-            // Reset simulation using supervisor
-            printf("Reset simulation requested - restarting simulation\n");
-            
-            // Get reference to the current robot node
-            WbNodeRef robot_node = wb_supervisor_node_get_self();
-            
-            // Restart the simulation
-            wb_supervisor_simulation_reset();
-            
-            // Restart this controller
-            wb_supervisor_node_restart_controller(robot_node);
-            
-            return 0;  // Exit the current instance
-        }
+        printf("Received new commands, updating active_commands array...\n");
+        active_commands[0] = socket_commands.forward;
+        active_commands[1] = socket_commands.backward;
+        active_commands[2] = socket_commands.right;
+        active_commands[3] = socket_commands.left;
+        active_commands[4] = socket_commands.yaw_increase;
+        active_commands[5] = socket_commands.yaw_decrease;
+        active_commands[6] = socket_commands.height_diff_increase;
+        active_commands[7] = socket_commands.height_diff_decrease;
+        active_commands[8] = 0; // unused
         
-        // Execute movement commands once
-        if (socket_commands.forward == 1) {
-            printf("GO FORWARD - Setting forward_desired = +0.02\n");
-            forward_desired = +0.02;
-        }
-        if (socket_commands.backward == 1) {
-            printf("GO BACKWARD - Setting forward_desired = -0.02\n");
-            forward_desired = -0.02;
-        }
-        if (socket_commands.right == 1) {
-            printf("GO RIGHT - Setting sideways_desired = -0.02\n");
-            sideways_desired = -0.02;
-        }
-        if (socket_commands.left == 1) {
-            printf("GO LEFT - Setting sideways_desired = +0.02\n");
-            sideways_desired = +0.02;
-        }
-        if (socket_commands.yaw_increase == 1) {
-            printf("YAW INCREASE - Setting yaw_desired = 0.02\n");
-            yaw_desired = 0.02;
-        }
-        if (socket_commands.yaw_decrease == 1) {
-            printf("YAW DECREASE - Setting yaw_desired = -0.02\n");
-            yaw_desired = -0.02;
-        }
-        if (socket_commands.height_diff_increase == 1) {
-            printf("HEIGHT INCREASE - Setting height_diff_desired = 0.1\n");
-            height_diff_desired = 0.1;
-        }
-        if (socket_commands.height_diff_decrease == 1) {
-            printf("HEIGHT DECREASE - Setting height_diff_desired = -0.1\n");
-            height_diff_desired = -0.1;
-        }
+        command_received = 1;  // Set flag to indicate a command was received
         
-        // Execute the command for one timestep, then send new array
-        height_desired += height_diff_desired * dt;
-        desired_state.yaw_rate = yaw_desired;
-        desired_state.vy = sideways_desired;
-        desired_state.vx = forward_desired;
-        desired_state.altitude = height_desired;
-        
-        // DEBUG: Print desired state before PID
-        printf("=== COMMAND EXECUTION DEBUG ===\n");
-        printf("Desired State: vx=%.3f, vy=%.3f, yaw_rate=%.3f, altitude=%.3f\n", 
-               desired_state.vx, desired_state.vy, desired_state.yaw_rate, desired_state.altitude);
-        printf("Actual State: vx=%.3f, vy=%.3f, yaw_rate=%.3f, altitude=%.3f\n", 
-               actual_state.vx, actual_state.vy, actual_state.yaw_rate, actual_state.altitude);
-        printf("Attitude: roll=%.3f, pitch=%.3f\n", actual_state.roll, actual_state.pitch);
-        
-        pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
-        
-        // DEBUG: Print motor commands after PID
-        printf("Motor Commands (before clamping): m1=%.2f, m2=%.2f, m3=%.2f, m4=%.2f\n", 
-               motor_power.m1, motor_power.m2, motor_power.m3, motor_power.m4);
-        printf("Desired State (after velocity PID): roll=%.3f, pitch=%.3f\n", 
-               desired_state.roll, desired_state.pitch);
+        printf("Active commands updated: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
+               active_commands[0], active_commands[1], active_commands[2], active_commands[3],
+               active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
+    }
+    
+    // Reset all command values
+    forward_desired = 0;
+    sideways_desired = 0;
+    yaw_desired = 0;
+    height_diff_desired = 0;
 
-        // Setting motorspeed with safety clamping
-        double m1_clamped = clamp_motor_speed(-motor_power.m1);
-        double m2_clamped = clamp_motor_speed(motor_power.m2);
-        double m3_clamped = clamp_motor_speed(-motor_power.m3);
-        double m4_clamped = clamp_motor_speed(motor_power.m4);
-        
-        wb_motor_set_velocity(m1_motor, m1_clamped);
-        wb_motor_set_velocity(m2_motor, m2_clamped);
-        wb_motor_set_velocity(m3_motor, m3_clamped);
-        wb_motor_set_velocity(m4_motor, m4_clamped);
-        
-        // DEBUG: Print final motor speeds
-        printf("Final Motor Speeds: m1=%.2f, m2=%.2f, m3=%.2f, m4=%.2f\n", 
-               m1_clamped, m2_clamped, m3_clamped, m4_clamped);
-        printf("================================\n");
-        
-        // Wait 2 seconds for the PID to stabilize before taking next photo
-        printf("Waiting 2 seconds for PID stabilization...\n");
-        double command_start_time = wb_robot_get_time();
-        while (wb_robot_step(timestep) != -1) {
-            if (wb_robot_get_time() - command_start_time >= 2.0) {
-                break;
-            }
+    printf("Active commands: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
+           active_commands[0], active_commands[1], active_commands[2], active_commands[3],
+           active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
+    
+    // Apply all active commands concurrently
+    for (int i = 0; i < 9; i++) {
+      if (active_commands[i] == 1) {  // Only process active commands
+        switch (i + 1) {  // Convert array index to command number (0->1, 1->2, etc.)
+          case 1:
+            forward_desired += 0.5;  // Use += to combine multiple commands
+            break;
+          case 2:
+            forward_desired -= 0.5;
+            break;
+          case 3:
+            sideways_desired -= 0.5;
+            break;
+          case 4:
+            sideways_desired += 0.5;
+            break;
+          case 5:
+            yaw_desired += 1.0;
+            break;
+          case 6:
+            yaw_desired -= 1.0;
+            break;
+          case 7:
+            height_diff_desired += 0.1;
+            break;
+          case 8:
+            height_diff_desired -= 0.1;
+            break;
         }
-        
-        // Send new 2D array after PID stabilization
-        printf("Sending new 2D array after PID stabilization...\n");
+      }
+    }
+
+    height_desired += height_diff_desired * dt;
+
+    // Send new 2D array only if a command was received and processed
+    if (command_received) {
+        printf("Sending 2D array after processing received command...\n");
         send_2d_array(camera);
-        
-        // Reset command values for next iteration
-        forward_desired = 0;
-        sideways_desired = 0;
-        yaw_desired = 0;
-        height_diff_desired = 0;
+        command_received = 0;  // Reset flag after sending array
     }
 
     // Example how to get sensor data
     // range_front_value = wb_distance_sensor_get_value(range_front));
     // const unsigned char *image = wb_camera_get_image(camera);
 
-    // PID velocity controller with fixed height (only when no commands received)
-    if (!is_non_idle_command(socket_commands)) {
-        desired_state.yaw_rate = yaw_desired;
-        desired_state.vy = sideways_desired;
-        desired_state.vx = forward_desired;
-        desired_state.altitude = height_desired;
-        pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
+    desired_state.yaw_rate = yaw_desired;
 
-        // Setting motorspeed with safety clamping
-        wb_motor_set_velocity(m1_motor, clamp_motor_speed(-motor_power.m1));
-        wb_motor_set_velocity(m2_motor, clamp_motor_speed(motor_power.m2));
-        wb_motor_set_velocity(m3_motor, clamp_motor_speed(-motor_power.m3));
-        wb_motor_set_velocity(m4_motor, clamp_motor_speed(motor_power.m4));
-    }
+    // PID velocity controller with fixed height
+    desired_state.vy = sideways_desired;
+    desired_state.vx = forward_desired;
+    desired_state.altitude = height_desired;
+    pid_velocity_fixed_height_controller(actual_state, &desired_state, gains_pid, dt, &motor_power);
+
+    // Setting motorspeed
+    wb_motor_set_velocity(m1_motor, -motor_power.m1);
+    wb_motor_set_velocity(m2_motor, motor_power.m2);
+    wb_motor_set_velocity(m3_motor, -motor_power.m3);
+    wb_motor_set_velocity(m4_motor, motor_power.m4);
 
     // Save past time for next time step
     past_time = wb_robot_get_time();
