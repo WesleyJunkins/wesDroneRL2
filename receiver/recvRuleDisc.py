@@ -11,7 +11,7 @@ import json
 # Function to take the array, and make sure the drone is still following the curve
 def process_array(array_2d, client_socket):
     """
-    Check if the curve is properly centered in the array and send appropriate commands.
+    Advanced line following using computer vision techniques.
     
     Args:
         array_2d: 2D numpy array (64x64) containing the curve data
@@ -20,175 +20,117 @@ def process_array(array_2d, client_socket):
     Returns:
         bool: True if curve is properly centered, False otherwise
     """
-    # Initialize instruction list
-    instructions = []
-    
-    # DEBUG: Print array statistics
-    print(f"=== ARRAY ANALYSIS DEBUG ===")
-    print(f"Array shape: {array_2d.shape}")
-    print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
-    print(f"Mean value: {np.mean(array_2d):.3f}")
-    print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
-    
-    # Check columns 0-19 (should be all 0's)
-    left_side_issue = False
-    for col in range(20):  # 0 to 19 inclusive
-        if not np.all(array_2d[:, col] == 0):
-            print(f"Check 1 failed: Column {col} contains non-zero values")
-            left_side_issue = True
-            break
-    
-    # Check columns 43-63 (should be all 0's)
-    right_side_issue = False
-    for col in range(43, 64):  # 43 to 63 inclusive
-        if not np.all(array_2d[:, col] == 0):
-            print(f"Check 1 failed: Column {col} contains non-zero values")
-            right_side_issue = True
-            break
-    
-    # Add only one movement command based on which side has issues
-    if left_side_issue and not right_side_issue:
-        instructions.append("backward")  # Move backward to get back on track
-    elif right_side_issue and not left_side_issue:
-        instructions.append("forward")  # Move forward to get back on track
-    elif left_side_issue and right_side_issue:
-        # Both sides have issues - need to center first, don't add movement command
-        print("Both sides have issues - skipping forward/backward movement")
-    
-    if not instructions:
-        print("Passed Check 1")
-    
-    # Check 2: Analyze columns 20-24 and 38-43 for turn direction
-    yaw_correction_needed = False
-    yaw_direction = None
-    
-    # Check columns 20-24 (left side)
-    for col in range(20, 25):  # 20 to 25 inclusive
-        # Check upper half (rows 0-31)
-        upper_half = array_2d[0:32, col]
-        if not np.all(upper_half == 0):
-            print("Needs to turn left")
-            yaw_correction_needed = True
-            yaw_direction = "yaw_decrease"
-            break
-        
-        # Check lower half (rows 32-63)
-        lower_half = array_2d[32:64, col]
-        if not np.all(lower_half == 0):
-            print("Needs to turn right")
-            yaw_correction_needed = True
-            yaw_direction = "yaw_increase"
-            break
-    
-    # Only check right side if no yaw correction was found on left side
-    if not yaw_correction_needed:
-        # Check columns 38-43 (right side)
-        for col in range(38, 44):  # 38 to 43 inclusive
-            # Check upper half (rows 0-31)
-            upper_half = array_2d[0:32, col]
-            if not np.all(upper_half == 0):
-                print("Needs to turn right")
-                yaw_correction_needed = True
-                yaw_direction = "yaw_increase"
-                break
-            
-            # Check lower half (rows 32-63)
-            lower_half = array_2d[32:64, col]
-            if not np.all(lower_half == 0):
-                print("Needs to turn left")
-                yaw_correction_needed = True
-                yaw_direction = "yaw_decrease"
-                break
-    
-    # Add yaw correction if needed
-    if yaw_correction_needed and yaw_direction:
-        instructions.append(yaw_direction)
-    
-    if not any("yaw" in inst for inst in instructions):
-        print("Passed Check 2")
-    
-    # Check 3: Analyze average values in center columns 31 and 32
-    # Calculate average of all values in columns 31 and 32
-    center_columns = np.concatenate([array_2d[:, 31], array_2d[:, 32]])
-    average_value = np.mean(center_columns)
-    print(f"Center average: {average_value:.3f}")
-    
-    # DEBUG: Print detailed center analysis
-    col_31_avg = np.mean(array_2d[:, 31])
-    col_32_avg = np.mean(array_2d[:, 32])
-    print(f"DEBUG: Column 31 avg: {col_31_avg:.3f}, Column 32 avg: {col_32_avg:.3f}")
-    
-    if average_value < 2.0 or average_value > 4.0:
-        print("Too off-centered")
-        
-        # Additional check: analyze column 29 for directional feedback
-        column_29_average = np.mean(array_2d[:, 29])
-        print(f"DEBUG: Column 29 average: {column_29_average:.3f}")
-        
-        if column_29_average < 0.5:
-            print("Needs to shift left")
-            instructions.append("left")
-        elif column_29_average > 1.0:
-            print("Needs to shift right")
-            instructions.append("right")
-    else:
-        print("Passed Check 3")
-    
-    # If all checks passed (no corrections needed), send forward command
-    if len(instructions) == 0:
-        print("All checks passed - sending forward command")
-        instructions.append("forward")
-
-    # TESTING INSTRUCTIONS
-    instructions = ["forward", "right", "yaw_increase"]
-    
-    # Send all instructions (no priority filtering)
-    send_instructions(client_socket, instructions)
-    
-    # Return True if no corrections needed, False if corrections were made
-    return len(instructions) == 1 and instructions[0] == "forward"
-
-def send_instructions(client_socket, instructions):
-    """
-    Send compiled instructions as a single JSON command to the controller.
-    
-    Args:
-        client_socket: The socket connection to the controller
-        instructions: List of instruction strings (e.g., ["forward", "left", "yaw_increase"])
-    """
-    # Initialize command values array [forward, backward, left, right, yaw_increase, 
+    # Initialize command array [forward, backward, left, right, yaw_increase, 
     # yaw_decrease, height_diff_increase, height_diff_decrease, reset_simulation]
     command_values = [0, 0, 0, 0, 0, 0, 0, 0, 0]
     
-    # Map instructions to command values
-    for instruction in instructions:
-        if instruction == "forward":
-            command_values[0] = 1
-        elif instruction == "backward":
-            command_values[1] = 1
-        elif instruction == "left":
-            command_values[2] = 1
-        elif instruction == "right":
-            command_values[3] = 1
-        elif instruction == "yaw_increase":
-            command_values[4] = 1
-        elif instruction == "yaw_decrease":
-            command_values[5] = 1
-        elif instruction == "height_diff_increase":
-            command_values[6] = 1
-        elif instruction == "height_diff_decrease":
-            command_values[7] = 1
-        elif instruction == "reset_simulation":
-            command_values[8] = 1
+    # Convert to float for better processing
+    img = array_2d.astype(np.float32)
     
-    # Send the compiled command
+    # 1. LINE DETECTION: Find the brightest path (line)
+    # Use adaptive thresholding - find pixels brighter than mean + std
+    mean_val = np.mean(img)
+    std_val = np.std(img)
+    threshold = mean_val + 0.5 * std_val
+    
+    # Create line mask
+    line_mask = (img >= threshold).astype(np.uint8)
+    
+    # Check if we have enough line pixels
+    line_pixels = np.sum(line_mask)
+    if line_pixels < 50:  # Not enough line detected
+        print("No clear line detected - continuing forward")
+        command_values[0] = 1  # forward
+        send_command(client_socket, command_values)
+        return False
+    
+    # 2. HORIZONTAL CENTERING: Find line center in each row
+    rows_with_line = []
+    line_centers = []
+    
+    for row in range(64):
+        row_pixels = line_mask[row, :]
+        if np.sum(row_pixels) > 0:
+            # Find center of line in this row
+            col_indices = np.where(row_pixels)[0]
+            if len(col_indices) > 0:
+                center = np.mean(col_indices)
+                rows_with_line.append(row)
+                line_centers.append(center)
+    
+    if len(line_centers) < 5:  # Not enough line segments
+        print("Insufficient line segments - continuing forward")
+        command_values[0] = 1  # forward
+        send_command(client_socket, command_values)
+        return False
+    
+    # 3. LINE FITTING: Fit a line to the detected points
+    rows_with_line = np.array(rows_with_line)
+    line_centers = np.array(line_centers)
+    
+    # Fit line: center = slope * row + intercept
+    # Use robust fitting (least squares)
+    A = np.vstack([rows_with_line, np.ones(len(rows_with_line))]).T
+    slope, intercept = np.linalg.lstsq(A, line_centers, rcond=None)[0]
+    
+    # 4. CONTROL DECISIONS
+    image_center = 31.5  # Center of 64-pixel wide image
+    
+    # Use the fitted line to determine lateral position at different heights
+    # Check line position at top (row 10) and middle (row 32) of image
+    line_at_top = slope * 10 + intercept
+    line_at_middle = slope * 32 + intercept
+    
+    # Use the line position at the middle for more stable centering
+    # The middle is less affected by camera tilt than the top
+    error = line_at_middle - image_center
+    
+    # Much larger deadband to prevent oscillation from camera movement
+    # Only correct when significantly off-center to allow faster forward progress
+    if abs(error) > 15.0:  # Very large deadband for smooth following
+        if error > 0:
+            command_values[2] = 1  # left (line is to the right, move left to center)
+        else:
+            command_values[3] = 1  # right (line is to the left, move right to center)
+    
+    # Check line slope for yaw correction
+    # Only apply yaw correction for significant curves, not small tilts
+    if abs(slope) > 0.2:  # Increased threshold to ignore camera tilt
+        if slope > 0:
+            command_values[4] = 1  # yaw_increase (turn left to follow right-curving line)
+        else:
+            command_values[5] = 1  # yaw_decrease (turn right to follow left-curving line)
+    
+    # Check if line is too far to the sides (forward/backward)
+    current_center = slope * 32 + intercept  # Line center at middle of image
+    if current_center < 10:  # Line too far left
+        command_values[1] = 1  # backward
+    elif current_center > 54:  # Line too far right
+        command_values[0] = 1  # forward
+    
+    # Prioritize forward movement - only apply lateral corrections if line is very far off
+    # This allows the drone to make faster progress around the track
+    if sum(command_values) == 0:
+        command_values[0] = 1  # forward
+    elif command_values[0] == 0 and (command_values[2] == 1 or command_values[3] == 1):
+        # If we're making lateral corrections, also go forward to maintain progress
+        command_values[0] = 1  # forward
+    
+    # Print results with debug info
+    command_names = ["forward", "backward", "left", "right", "yaw_increase", 
+                    "yaw_decrease", "height_diff_increase", "height_diff_decrease", "reset_simulation"]
+    active_commands = [name for i, name in enumerate(command_names) if command_values[i] == 1]
+    
+    print(f"Line pixels: {line_pixels}, Slope: {slope:.3f}, Intercept: {intercept:.1f}")
+    print(f"Commands sent: {', '.join(active_commands)}")
+    print(f"Command array: {command_values}")
+    
+    # Send the command array
     send_command(client_socket, command_values)
     
-    # Print summary of instructions sent
-    if instructions:
-        print(f"Sent instructions: {', '.join(instructions)}")
-    else:
-        print("No corrections needed - drone is on track")
+    # Return True if only forward command is set, False if corrections were made
+    return command_values == [1, 0, 0, 0, 0, 0, 0, 0, 0]
+
 
 def send_command(client_socket, command_values):
     """
@@ -251,22 +193,22 @@ while True:
                         # Convert binary data to numpy array
                         array_2d = np.frombuffer(response, dtype=np.int8).reshape((64, 64))
                         
-                        print(f"\n=== RECEIVER RECEIVED 2D ARRAY (64x64) ===")
-                        print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
-                        print("-" * 130)
+                        # print(f"\n=== RECEIVER RECEIVED 2D ARRAY (64x64) ===")
+                        # print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
+                        # print("-" * 130)
                         
                         # Print the entire array
-                        for y in range(64):
-                            row_str = ""
-                            for x in range(64):
-                                row_str += f"{array_2d[y, x]} "
-                            print(row_str)
+                        # for y in range(64):
+                        #     row_str = ""
+                        #     for x in range(64):
+                        #         row_str += f"{array_2d[y, x]} "
+                        #     print(row_str)
                         
-                        print("-" * 130)
-                        print(f"Array shape: {array_2d.shape}")
-                        print(f"Data type: {array_2d.dtype}")
-                        print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
-                        print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
+                        # print("-" * 130)
+                        # print(f"Array shape: {array_2d.shape}")
+                        # print(f"Data type: {array_2d.dtype}")
+                        # print(f"Min value: {array_2d.min()}, Max value: {array_2d.max()}")
+                        # print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
 
                         # Process the array to check curve centering and send appropriate commands
                         process_array(array_2d, client_socket)

@@ -123,22 +123,22 @@ void send_2d_array(WbDeviceTag camera) {
     }
     
     // Print the 2D array before sending
-    printf("\n=== CONTROLLER SENDING 2D ARRAY (%dx%d) ===\n", width, height);
-    printf("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white\n");
-    printf("-");
-    for (int i = 0; i < width * 2 + 8; i++) printf("-");
-    printf("\n");
+    // printf("\n=== CONTROLLER SENDING 2D ARRAY (%dx%d) ===\n", width, height);
+    // printf("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white\n");
+    // printf("-");
+    // for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    // printf("\n");
     
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            printf("%d ", array_2d[y * width + x]);
-        }
-        printf("\n");
-    }
+    // for (int y = 0; y < height; y++) {
+    //     for (int x = 0; x < width; x++) {
+    //         printf("%d ", array_2d[y * width + x]);
+    //     }
+    //     printf("\n");
+    // }
     
-    printf("-");
-    for (int i = 0; i < width * 2 + 8; i++) printf("-");
-    printf("\n");
+    // printf("-");
+    // for (int i = 0; i < width * 2 + 8; i++) printf("-");
+    // printf("\n");
     
     // Send array data to port
     int array_size = width * height * sizeof(int8_t);
@@ -315,7 +315,7 @@ int main(int argc, char **argv) {
     desired_state.yaw_rate = 0;
     desired_state.altitude = 1.0;
 
-    double forward_desired = 0;
+    double forward_desired = 0.2; //Changed from 0 to always have some forward movement
     double sideways_desired = 0;
     double yaw_desired = 0;
     double height_diff_desired = 0;
@@ -343,8 +343,8 @@ int main(int argc, char **argv) {
         printf("Received new commands, updating active_commands array...\n");
         active_commands[0] = socket_commands.forward;
         active_commands[1] = socket_commands.backward;
-        active_commands[2] = socket_commands.right;
-        active_commands[3] = socket_commands.left;
+        active_commands[2] = socket_commands.left;
+        active_commands[3] = socket_commands.right;
         active_commands[4] = socket_commands.yaw_increase;
         active_commands[5] = socket_commands.yaw_decrease;
         active_commands[6] = socket_commands.height_diff_increase;
