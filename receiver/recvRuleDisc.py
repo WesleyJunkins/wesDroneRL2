@@ -29,61 +29,71 @@ def process_array(array_2d, client_socket):
     
     # 1. LINE DETECTION: Find the brightest path (line)
     # Use adaptive thresholding - find pixels brighter than mean + std
+    # This essentially just finds the brightest line in the image
     mean_val = np.mean(img)
     std_val = np.std(img)
     threshold = mean_val + 0.5 * std_val
     
     # Create line mask
+    # This is a binary mask of the pixels that are brighter than the threshold
+    # This will make it easier to find the line in the image
     line_mask = (img >= threshold).astype(np.uint8)
     
     # Check if we have enough line pixels
-    line_pixels = np.sum(line_mask)
+    # Makes sure the line is still in view. If not, the drone will just break from the path
+    # I may change this later to just reset the simulation
+    line_pixels = np.sum(line_mask) # Counts all the 1s
     if line_pixels < 50:  # Not enough line detected
         print("No clear line detected - continuing forward")
         command_values[0] = 1  # forward
         send_command(client_socket, command_values)
-        return False
+        return False # End early because we can't see the line
     
     # 2. HORIZONTAL CENTERING: Find line center in each row
-    rows_with_line = []
-    line_centers = []
-    
-    for row in range(64):
-        row_pixels = line_mask[row, :]
-        if np.sum(row_pixels) > 0:
+    # Basically gets the center line of the curve, no matter the thickness of the curve
+    rows_with_line = [] # List of rows that have contact with the line
+    line_centers = [] # List of the center of the line in each row
+    for row in range(64): # Scan each row
+        row_pixels = line_mask[row, :] # Get all the pixels in the row
+        if np.sum(row_pixels) > 0: # If row has some pixels of the line, then find the center
             # Find center of line in this row
             col_indices = np.where(row_pixels)[0]
             if len(col_indices) > 0:
                 center = np.mean(col_indices)
                 rows_with_line.append(row)
                 line_centers.append(center)
-    
     if len(line_centers) < 5:  # Not enough line segments
         print("Insufficient line segments - continuing forward")
         command_values[0] = 1  # forward
         send_command(client_socket, command_values)
-        return False
+        return False # End early because we can't see the line
     
     # 3. LINE FITTING: Fit a line to the detected points
     rows_with_line = np.array(rows_with_line)
     line_centers = np.array(line_centers)
     
     # Fit line: center = slope * row + intercept
-    # Use robust fitting (least squares)
-    A = np.vstack([rows_with_line, np.ones(len(rows_with_line))]).T
+    # This finds the best straight line that fits through all the detected line center points
+    # Use robust fitting (least squares) (linear regression)
+    A = np.vstack([rows_with_line, np.ones(len(rows_with_line))]).T # A becomes a 2-column matrix with the left column being the rows that have 1s and the right column being all 1s
+    # This solves the least squares equation to find the slope and intercept of the line
+    # A is the design matrix
+    # line_centers is the vector of y-values that we want to fit to the line
+    # np.linalg.lstsq is a function that solves the least squares equation, it finds the line that minimizes the sum of squared errors
+    # [0] is the first element of the tuple returned by np.linalg.lstsq, which is the solution vector
     slope, intercept = np.linalg.lstsq(A, line_centers, rcond=None)[0]
     
     # 4. CONTROL DECISIONS
     image_center = 31.5  # Center of 64-pixel wide image
     
     # Use the fitted line to determine lateral position at different heights
-    # Check line position at top (row 10) and middle (row 32) of image
-    line_at_top = slope * 10 + intercept
-    line_at_middle = slope * 32 + intercept
+    # Check where line should be at top (row 10) and middle (row 32) of image
+    line_at_top = slope * 10 + intercept # Where the line is heading in the future
+    line_at_middle = slope * 32 + intercept# Where the line is currently positioned
     
     # Use the line position at the middle for more stable centering
     # The middle is less affected by camera tilt than the top
-    error = line_at_middle - image_center
+    error = line_at_middle - image_center # How far the line is from the center of the image
     
     # Much larger deadband to prevent oscillation from camera movement
     # Only correct when significantly off-center to allow faster forward progress
