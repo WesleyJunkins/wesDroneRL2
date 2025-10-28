@@ -335,6 +335,23 @@ int main(int argc, char **argv) {
     // Check for incoming commands from the socket
     control_commands_json_t socket_commands = check_for_commands();
     
+    // Handle simulation reset command
+    if (socket_commands.reset_simulation) {
+        // Reset simulation using supervisor
+        printf("Reset simulation requested - restarting simulation\n");
+        
+        // Get reference to the current robot node
+        WbNodeRef robot_node = wb_supervisor_node_get_self();
+        
+        // Restart the simulation
+        wb_supervisor_simulation_reset();
+        
+        // Restart this controller
+        wb_supervisor_node_restart_controller(robot_node);
+        
+        return 0;  // Exit the current instance
+    }
+    
     // Update active_commands array only if we received new commands
     if (socket_commands.forward || socket_commands.backward || socket_commands.left || 
         socket_commands.right || socket_commands.yaw_increase || socket_commands.yaw_decrease ||
