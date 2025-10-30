@@ -385,27 +385,29 @@ int main(int argc, char **argv) {
            active_commands[0], active_commands[1], active_commands[2], active_commands[3],
            active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
     
+    float scalar = 1.5;
+    
     // Apply all active commands concurrently
     for (int i = 0; i < 9; i++) {
       if (active_commands[i] == 1) {  // Only process active commands
         switch (i + 1) {  // Convert array index to command number (0->1, 1->2, etc.)
           case 1:
-            forward_desired += 0.5;  // Use += to combine multiple commands
+            forward_desired += 0.5 * scalar;  // Use += to combine multiple commands
             break;
           case 2:
-            forward_desired -= 0.5;
+            forward_desired -= 0.5 * scalar;
             break;
           case 3:
-            sideways_desired -= 0.5;
+            sideways_desired -= 0.5 * scalar;
             break;
           case 4:
-            sideways_desired += 0.5;
+            sideways_desired += 0.5 * scalar;
             break;
           case 5:
-            yaw_desired += 1.0;
+            yaw_desired += 1.0 * scalar;
             break;
           case 6:
-            yaw_desired -= 1.0;
+            yaw_desired -= 1.0 * scalar;
             break;
           case 7:
             height_diff_desired += 0.1;
