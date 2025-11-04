@@ -8,4 +8,4 @@ orthographicViewHeight: 1
 textFiles: 0 "controllers/disc_wes_flight_controller_crazyflie/disc_wes_flight_controller_crazyflie.c"
 consoles: Console:All:All
 renderingDevicePerspectives: Crazyflie:camera;0;0.0987654;0;0
-renderingDevicePerspectives: Crazyflie:down_camera;1;1.9375;0;0
+renderingDevicePerspectives: Crazyflie:down_camera;1;1.35938;0;0
