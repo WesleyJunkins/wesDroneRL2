@@ -55,13 +55,6 @@
 #define SOCKET_PORT 8080
 #define BUFFER_SIZE 1024
 
-// Starting position bounding box for lap detection
-// Adjust these values based on your starting position in the Webots world
-#define START_BOX_X_MIN -0.5
-#define START_BOX_X_MAX 0.5
-#define START_BOX_Y_MIN -0.5
-#define START_BOX_Y_MAX 0.5
-
 // Structure to hold control commands from JSON
 typedef struct {
     int forward;
@@ -97,14 +90,8 @@ int brightness_to_scale(int brightness) {
     return 4;                            // White
 }
 
-// Function to check if drone position is within the starting box
-int is_in_starting_box(double x, double y) {
-    return (x >= START_BOX_X_MIN && x <= START_BOX_X_MAX &&
-            y >= START_BOX_Y_MIN && y <= START_BOX_Y_MAX);
-}
-
-// Function to send 2D array to port with lap completion flag
-void send_2d_array(WbDeviceTag camera, int lap_completed) {
+// Function to send 2D array to port
+void send_2d_array(WbDeviceTag camera) {
     // Get camera image
     const unsigned char *image = wb_camera_get_image(camera);
     if (!image) {
@@ -156,12 +143,7 @@ void send_2d_array(WbDeviceTag camera, int lap_completed) {
     // Send array data to port
     int array_size = width * height * sizeof(int8_t);
     send(g_socket, (const char*)array_2d, array_size, 0);
-    
-    // Send lap completion flag as a single byte (0 or 1)
-    uint8_t lap_flag = (lap_completed ? 1 : 0);
-    send(g_socket, (const char*)&lap_flag, sizeof(uint8_t), 0);
-    
-    printf("Sent 2D array: %dx%d, %d bytes + lap flag: %d\n", width, height, array_size, lap_flag);
+    printf("Sent 2D array: %dx%d, %d bytes\n", width, height, array_size);
     
     // Clean up
     free(array_2d);
@@ -301,10 +283,6 @@ int main(int argc, char **argv) {
   // Initialize struct for motor power
   motor_power_t motor_power;
 
-  // Initialize lap detection variables
-  static int was_in_box = 0;  // Track if drone was in box in previous timestep
-  static int lap_completed = 0;  // Flag for lap completion (true for one timestep only)
-
   printf("\n");
 
   printf("====== Active =======\n");
@@ -342,26 +320,12 @@ int main(int argc, char **argv) {
     double yaw_desired = 0;
     double height_diff_desired = 0;
 
-    // Lap detection: Check if drone is in starting box
-    int is_in_box = is_in_starting_box(x_global, y_global);
-    
-    // Detect lap completion: entering box after being outside
-    if (!was_in_box && is_in_box) {
-        lap_completed = 1;  // Lap completed!
-        printf("LAP COMPLETED! Drone entered starting box at (%.2f, %.2f)\n", x_global, y_global);
-    } else {
-        lap_completed = 0;  // Reset flag if not entering from outside
-    }
-    
-    // Update state for next timestep
-    was_in_box = is_in_box;
-
     // Send ready-up 2D array 5 seconds after startup (allow drone to get in air)
     static int startup_counter = 0;
     startup_counter++;
     if (startup_counter == 500) {  // ~5 seconds after startup (500 * 10ms timestep)
         printf("Sending ready-up 2D array (drone should be in air)...\n");
-        send_2d_array(camera, lap_completed);
+        send_2d_array(camera);
     }
 
     // Static array to hold the last received commands (persists between iterations)
@@ -460,7 +424,7 @@ int main(int argc, char **argv) {
     // Send new 2D array only if a command was received and processed
     if (command_received) {
         printf("Sending 2D array after processing received command...\n");
-        send_2d_array(camera, lap_completed);
+        send_2d_array(camera);
         command_received = 0;  // Reset flag after sending array
     }
 

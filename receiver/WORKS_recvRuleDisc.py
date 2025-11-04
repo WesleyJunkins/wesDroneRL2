@@ -7,8 +7,6 @@ import socket
 import time
 import numpy as np
 import json
-import csv
-import os
 
 # Function to take the array, and make sure the drone is still following the curve
 def process_array(array_2d, client_socket):
@@ -20,7 +18,7 @@ def process_array(array_2d, client_socket):
         client_socket: Socket connection to send commands to the controller
         
     Returns:
-        tuple: (bool, float or None) - (True if curve is properly centered, error value or None if error couldn't be calculated)
+        bool: True if curve is properly centered, False otherwise
     """
     # Initialize command array [forward, backward, left, right, yaw_increase, 
     # yaw_decrease, height_diff_increase, height_diff_decrease, reset_simulation]
@@ -49,7 +47,7 @@ def process_array(array_2d, client_socket):
         print("No clear line detected - continuing forward")
         command_values[0] = 1  # forward
         send_command(client_socket, command_values)
-        return False, None  # End early because we can't see the line, error not calculated
+        return False # End early because we can't see the line
     
     # 2. HORIZONTAL CENTERING: Find line center in each row
     # Basically gets the center line of the curve, no matter the thickness of the curve
@@ -68,7 +66,7 @@ def process_array(array_2d, client_socket):
         print("Insufficient line segments - continuing forward")
         command_values[0] = 1  # forward
         send_command(client_socket, command_values)
-        return False, None  # End early because we can't see the line, error not calculated
+        return False # End early because we can't see the line
     
     # 3. LINE FITTING: Fit a line to the detected points
     rows_with_line = np.array(rows_with_line)
@@ -140,9 +138,8 @@ def process_array(array_2d, client_socket):
     # Send the command array
     send_command(client_socket, command_values)
     
-    # Return True if only forward command is set, False if corrections were made, along with error value
-    is_centered = command_values == [1, 0, 0, 0, 0, 0, 0, 0, 0]
-    return is_centered, error
+    # Return True if only forward command is set, False if corrections were made
+    return command_values == [1, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
 def send_command(client_socket, command_values):
@@ -188,22 +185,6 @@ server_socket.setblocking(False)  # Non-blocking
 
 print(f"Server listening on port {port}")
 
-# Initialize CSV file for error logging
-csv_filename = "error_log.csv"
-csv_file_exists = os.path.exists(csv_filename)
-
-# Open CSV file in append mode
-csv_file = open(csv_filename, 'a', newline='')
-csv_writer = csv.writer(csv_file)
-
-# Write header if file is new
-if not csv_file_exists:
-    csv_writer.writerow(['timestep', 'error', 'lap_number'])
-
-# Initialize timestep counter and lap counter
-timestep = 0
-lap_count = 0
-
 while True:
     try:
         # Accept client connection
@@ -214,26 +195,13 @@ while True:
             
             while True:
                 # Receive binary array data from the controller
-                # Expecting 4097 bytes (4096 bytes for 64x64 int8_t array + 1 byte for lap flag)
+                # Expecting 4096 bytes (64x64 int8_t array)
                 try:
-                    response = client_socket.recv(4097)
+                    response = client_socket.recv(4096)
                     
-                    if len(response) == 4097:
-                        # Extract image array (first 4096 bytes)
-                        array_data = response[:4096]
-                        # Extract lap flag (last byte)
-                        lap_flag_byte = response[4096:4097]
-                        
+                    if len(response) == 4096:
                         # Convert binary data to numpy array
-                        array_2d = np.frombuffer(array_data, dtype=np.int8).reshape((64, 64))
-                        
-                        # Read lap completion flag (0 = False, 1 = True)
-                        lap_completed = bool(int.from_bytes(lap_flag_byte, byteorder='little'))
-                        
-                        # Increment lap counter if lap was completed
-                        if lap_completed:
-                            lap_count += 1
-                            print(f"LAP COMPLETED! Total laps: {lap_count}")
+                        array_2d = np.frombuffer(response, dtype=np.int8).reshape((64, 64))
                         
                         # print(f"\n=== RECEIVER RECEIVED 2D ARRAY (64x64) ===")
                         # print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
@@ -253,21 +221,11 @@ while True:
                         # print(f"Non-zero pixels: {np.count_nonzero(array_2d)} / {array_2d.size}")
 
                         # Process the array to check curve centering and send appropriate commands
-                        is_centered, error = process_array(array_2d, client_socket)
-                        
-                        # Log error, timestep, and lap number to CSV
-                        timestep += 1
-                        if error is not None:
-                            csv_writer.writerow([timestep, error, lap_count])
-                            csv_file.flush()  # Ensure data is written immediately
-                        else:
-                            # Log timestep with None error if line couldn't be detected
-                            csv_writer.writerow([timestep, None, lap_count])
-                            csv_file.flush()
+                        process_array(array_2d, client_socket)
 
                         # No delay - send commands immediately after processing
                     elif len(response) > 0:
-                        print(f"Received {len(response)} bytes (expected 4097)")
+                        print(f"Received {len(response)} bytes (expected 4096)")
                         print(f"First few bytes: {response[:20]}")
                     elif len(response) == 0:
                         # Client disconnected
@@ -294,7 +252,4 @@ while True:
         print(f"Error: {e}")
         time.sleep(5)
 
-# Close CSV file and socket
-csv_file.close()
 server_socket.close()
-print(f"Error log saved to {csv_filename}")
