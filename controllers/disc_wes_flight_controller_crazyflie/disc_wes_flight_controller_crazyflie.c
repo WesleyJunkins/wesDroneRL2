@@ -103,12 +103,12 @@ int is_in_starting_box(double x, double y) {
             y >= START_BOX_Y_MIN && y <= START_BOX_Y_MAX);
 }
 
-// Function to send 2D array to port with lap completion flag
-void send_2d_array(WbDeviceTag camera, int lap_completed) {
+// Function to send 2D array to port with lap count
+void send_2d_array(WbDeviceTag camera, int lap_count) {
     // Get camera image
     const unsigned char *image = wb_camera_get_image(camera);
     if (!image) {
-        printf("Cannot send array: no image data available\n");
+        // printf("Cannot send array: no image data available\n");
         return;
     }
     
@@ -116,12 +116,12 @@ void send_2d_array(WbDeviceTag camera, int lap_completed) {
     int height = wb_camera_get_height(camera);
     int channels = 4; // RGBA
     
-    printf("Converting image to 2D array: %dx%d\n", width, height);
+    // printf("Converting image to 2D array: %dx%d\n", width, height);
     
     // Create 2D array
     int8_t *array_2d = malloc(width * height * sizeof(int8_t));
     if (!array_2d) {
-        printf("Failed to allocate memory for 2D array\n");
+        // printf("Failed to allocate memory for 2D array\n");
         return;
     }
     
@@ -157,11 +157,11 @@ void send_2d_array(WbDeviceTag camera, int lap_completed) {
     int array_size = width * height * sizeof(int8_t);
     send(g_socket, (const char*)array_2d, array_size, 0);
     
-    // Send lap completion flag as a single byte (0 or 1)
-    uint8_t lap_flag = (lap_completed ? 1 : 0);
-    send(g_socket, (const char*)&lap_flag, sizeof(uint8_t), 0);
+    // Send lap count as a 32-bit integer (4 bytes)
+    int32_t lap_count_int = (int32_t)lap_count;
+    send(g_socket, (const char*)&lap_count_int, sizeof(int32_t), 0);
     
-    printf("Sent 2D array: %dx%d, %d bytes + lap flag: %d\n", width, height, array_size, lap_flag);
+    // printf("Sent 2D array: %dx%d, %d bytes + lap count: %d\n", width, height, array_size, lap_count);
     
     // Clean up
     free(array_2d);
@@ -205,7 +205,7 @@ control_commands_json_t check_for_commands() {
 int init_socket_connection() {
     g_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_socket == -1) {
-        printf("Failed to create socket\n");
+        // printf("Failed to create socket\n");
         return -1;
     }
     
@@ -215,7 +215,7 @@ int init_socket_connection() {
     server_addr.sin_port = htons(SOCKET_PORT);
     
     if (connect(g_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        printf("Failed to connect to port %d\n", SOCKET_PORT);
+        // printf("Failed to connect to port %d\n", SOCKET_PORT);
         close(g_socket);
         return -1;
     }
@@ -224,7 +224,7 @@ int init_socket_connection() {
     int flags = fcntl(g_socket, F_GETFL, 0);
     fcntl(g_socket, F_SETFL, flags | O_NONBLOCK);
     
-    printf("Connected to port %d\n", SOCKET_PORT);
+    // printf("Connected to port %d\n", SOCKET_PORT);
     return g_socket;
 }
 
@@ -303,11 +303,11 @@ int main(int argc, char **argv) {
 
   // Initialize lap detection variables
   static int was_in_box = 0;  // Track if drone was in box in previous timestep
-  static int lap_completed = 0;  // Flag for lap completion (true for one timestep only)
+  static int lap_count = 0;  // Track total number of completed laps
 
-  printf("\n");
+  // printf("\n");
 
-  printf("====== Active =======\n");
+  // printf("====== Active =======\n");
 
   while (wb_robot_step(timestep) != -1) {
     const double dt = wb_robot_get_time() - past_time;
@@ -347,11 +347,13 @@ int main(int argc, char **argv) {
     
     // Detect lap completion: entering box after being outside
     if (!was_in_box && is_in_box) {
-        lap_completed = 1;  // Lap completed!
-        printf("LAP COMPLETED! Drone entered starting box at (%.2f, %.2f)\n", x_global, y_global);
-    } else {
-        lap_completed = 0;  // Reset flag if not entering from outside
+        lap_count++;  // Increment lap counter
+        printf("LAP COMPLETED! Total laps: %d, Drone entered starting box at (%.2f, %.2f)\n", lap_count, x_global, y_global);
     }
+    
+    // DEBUG
+    // printf("Is in box: %d, was in box: %d, x_global: %f, y_global: %f\n", is_in_box, was_in_box, x_global, y_global);
+    // printf("Lap count: %d\n", lap_count);
     
     // Update state for next timestep
     was_in_box = is_in_box;
@@ -360,8 +362,8 @@ int main(int argc, char **argv) {
     static int startup_counter = 0;
     startup_counter++;
     if (startup_counter == 500) {  // ~5 seconds after startup (500 * 10ms timestep)
-        printf("Sending ready-up 2D array (drone should be in air)...\n");
-        send_2d_array(camera, lap_completed);
+        // printf("Sending ready-up 2D array (drone should be in air)...\n");
+        send_2d_array(camera, lap_count);
     }
 
     // Static array to hold the last received commands (persists between iterations)
@@ -374,7 +376,7 @@ int main(int argc, char **argv) {
     // Handle simulation reset command
     if (socket_commands.reset_simulation) {
         // Reset simulation using supervisor
-        printf("Reset simulation requested - restarting simulation\n");
+        // printf("Reset simulation requested - restarting simulation\n");
         
         // Get reference to the current robot node
         WbNodeRef robot_node = wb_supervisor_node_get_self();
@@ -393,7 +395,7 @@ int main(int argc, char **argv) {
         socket_commands.right || socket_commands.yaw_increase || socket_commands.yaw_decrease ||
         socket_commands.height_diff_increase || socket_commands.height_diff_decrease) {
         
-        printf("Received new commands, updating active_commands array...\n");
+        // printf("Received new commands, updating active_commands array...\n");
         active_commands[0] = socket_commands.forward;
         active_commands[1] = socket_commands.backward;
         active_commands[2] = socket_commands.left;
@@ -406,9 +408,9 @@ int main(int argc, char **argv) {
         
         command_received = 1;  // Set flag to indicate a command was received
         
-        printf("Active commands updated: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
-               active_commands[0], active_commands[1], active_commands[2], active_commands[3],
-               active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
+        // printf("Active commands updated: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
+        //        active_commands[0], active_commands[1], active_commands[2], active_commands[3],
+        //        active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
     }
     
     // Reset all command values
@@ -417,9 +419,9 @@ int main(int argc, char **argv) {
     yaw_desired = 0;
     height_diff_desired = 0;
 
-    printf("Active commands: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
-           active_commands[0], active_commands[1], active_commands[2], active_commands[3],
-           active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
+    // printf("Active commands: %d, %d, %d, %d, %d, %d, %d, %d, %d\n",
+    //        active_commands[0], active_commands[1], active_commands[2], active_commands[3],
+    //        active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
     
     float scalar = 0.5;
     
@@ -459,8 +461,8 @@ int main(int argc, char **argv) {
 
     // Send new 2D array only if a command was received and processed
     if (command_received) {
-        printf("Sending 2D array after processing received command...\n");
-        send_2d_array(camera, lap_completed);
+        // printf("Sending 2D array after processing received command...\n");
+        send_2d_array(camera, lap_count);
         command_received = 0;  // Reset flag after sending array
     }
 

@@ -198,11 +198,10 @@ csv_writer = csv.writer(csv_file)
 
 # Write header if file is new
 if not csv_file_exists:
-    csv_writer.writerow(['timestep', 'error', 'lap_number'])
+    csv_writer.writerow(['timestep', 'timestamp', 'error', 'lap_number'])
 
-# Initialize timestep counter and lap counter
+# Initialize timestep counter
 timestep = 0
-lap_count = 0
 
 while True:
     try:
@@ -212,16 +211,19 @@ while True:
             print(f"Controller connected from {client_address}")
             client_socket.setblocking(False)  # Non-blocking
             
+            # Capture start time for elapsed seconds calculation
+            start_time = time.time()
+            
             # Buffer to accumulate data until we have complete packet
             buffer = b''
-            expected_bytes = 4097  # 4096 bytes for array + 1 byte for lap flag
+            expected_bytes = 4100  # 4096 bytes for array + 4 bytes for lap count (int32)
             
             while True:
                 # Receive binary array data from the controller
-                # Expecting 4097 bytes (4096 bytes for 64x64 int8_t array + 1 byte for lap flag)
+                # Expecting 4100 bytes (4096 bytes for 64x64 int8_t array + 4 bytes for lap count)
                 try:
                     # Receive data and add to buffer
-                    response = client_socket.recv(4097)
+                    response = client_socket.recv(4100)
                     
                     if len(response) > 0:
                         buffer += response
@@ -230,8 +232,8 @@ while True:
                         if len(buffer) >= expected_bytes:
                             # Extract image array (first 4096 bytes)
                             array_data = buffer[:4096]
-                            # Extract lap flag (last byte)
-                            lap_flag_byte = buffer[4096:4097]
+                            # Extract lap count (last 4 bytes as int32)
+                            lap_count_bytes = buffer[4096:4100]
                             
                             # Remove processed data from buffer
                             buffer = buffer[expected_bytes:]
@@ -239,13 +241,8 @@ while True:
                             # Convert binary data to numpy array
                             array_2d = np.frombuffer(array_data, dtype=np.int8).reshape((64, 64))
                             
-                            # Read lap completion flag (0 = False, 1 = True)
-                            lap_completed = bool(int.from_bytes(lap_flag_byte, byteorder='little'))
-                            
-                            # Increment lap counter if lap was completed
-                            if lap_completed:
-                                lap_count += 1
-                                print(f"LAP COMPLETED! Total laps: {lap_count}")
+                            # Read lap count as 32-bit signed integer
+                            lap_count = int.from_bytes(lap_count_bytes, byteorder='little', signed=True)
                             
                             # print(f"\n=== RECEIVER RECEIVED 2D ARRAY (64x64) ===")
                             # print("0=black, 1=dark_gray, 2=medium_gray, 3=light_gray, 4=white")
@@ -267,14 +264,15 @@ while True:
                             # Process the array to check curve centering and send appropriate commands
                             is_centered, error = process_array(array_2d, client_socket)
                             
-                            # Log error, timestep, and lap number to CSV
+                            # Log error, timestep, elapsed seconds, and lap number to CSV (lap_count received from controller)
                             timestep += 1
+                            elapsed_seconds = time.time() - start_time  # Calculate elapsed seconds since connection
                             if error is not None:
-                                csv_writer.writerow([timestep, error, lap_count])
+                                csv_writer.writerow([timestep, elapsed_seconds, error, lap_count])
                                 csv_file.flush()  # Ensure data is written immediately
                             else:
                                 # Log timestep with None error if line couldn't be detected
-                                csv_writer.writerow([timestep, None, lap_count])
+                                csv_writer.writerow([timestep, elapsed_seconds, None, lap_count])
                                 csv_file.flush()
 
                             # No delay - send commands immediately after processing
