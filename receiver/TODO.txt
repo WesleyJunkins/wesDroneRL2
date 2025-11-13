@@ -6,9 +6,5 @@ Pure Pursuit — natural behavior for curves
 Hough Transform — robust to noise
 I can help implement any of these in a new file. Which one should we start with?
 
-- Send Dr. C my webots learning resources
-
 - Look at Udemy course in pytorch to help with transfer learning / genetic algorithms
     - Think of ways we could train models for genetic algorithms (X and Y, computer vision, etc...)
-
-- Forward the email from Fogartty to Dr. C
