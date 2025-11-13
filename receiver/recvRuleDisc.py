@@ -203,6 +203,12 @@ if not csv_file_exists:
 # Initialize timestep counter
 timestep = 0
 
+# Time limit: 10 minutes in seconds
+TIME_LIMIT_SECONDS = 10 * 60  # 600 seconds
+
+# Flag to track if we should exit
+should_exit = False
+
 while True:
     try:
         # Accept client connection
@@ -211,14 +217,24 @@ while True:
             print(f"Controller connected from {client_address}")
             client_socket.setblocking(False)  # Non-blocking
             
-            # Capture start time for elapsed seconds calculation
-            start_time = time.time()
+            # Start time will be set when first image is received
+            start_time = None
+            first_image_received = False
             
             # Buffer to accumulate data until we have complete packet
             buffer = b''
             expected_bytes = 4100  # 4096 bytes for array + 4 bytes for lap count (int32)
             
+            # Track last data reception time for crash detection
+            last_data_time = time.time()
+            CRASH_TIMEOUT = 5.0  # Consider crashed if no data for 5 seconds
+            
             while True:
+                # Check if we should exit due to time limit or crash
+                if should_exit:
+                    print("Exiting program...")
+                    break
+                
                 # Receive binary array data from the controller
                 # Expecting 4100 bytes (4096 bytes for 64x64 int8_t array + 4 bytes for lap count)
                 try:
@@ -226,10 +242,17 @@ while True:
                     response = client_socket.recv(4100)
                     
                     if len(response) > 0:
+                        last_data_time = time.time()  # Update last data reception time
                         buffer += response
                         
                         # Check if we have complete packet
                         if len(buffer) >= expected_bytes:
+                            # Set start time on first image received
+                            if not first_image_received:
+                                start_time = time.time()
+                                first_image_received = True
+                                print(f"First image received - starting timer at {start_time}")
+                            
                             # Extract image array (first 4096 bytes)
                             array_data = buffer[:4096]
                             # Extract lap count (last 4 bytes as int32)
@@ -264,30 +287,55 @@ while True:
                             # Process the array to check curve centering and send appropriate commands
                             is_centered, error = process_array(array_2d, client_socket)
                             
-                            # Log error, timestep, elapsed seconds, and lap number to CSV (lap_count received from controller)
-                            timestep += 1
-                            elapsed_seconds = time.time() - start_time  # Calculate elapsed seconds since connection
-                            if error is not None:
-                                csv_writer.writerow([timestep, elapsed_seconds, error, lap_count])
-                                csv_file.flush()  # Ensure data is written immediately
-                            else:
-                                # Log timestep with None error if line couldn't be detected
-                                csv_writer.writerow([timestep, elapsed_seconds, None, lap_count])
-                                csv_file.flush()
+                            # Calculate elapsed time since first image
+                            if start_time is not None:
+                                elapsed_seconds = time.time() - start_time
+                                
+                                # Check if 10 minutes have elapsed
+                                if elapsed_seconds >= TIME_LIMIT_SECONDS:
+                                    print(f"\n10 minutes elapsed ({elapsed_seconds:.2f} seconds) - ending program")
+                                    should_exit = True
+                                    break
+                                
+                                # Log error, timestep, elapsed seconds, and lap number to CSV (lap_count received from controller)
+                                timestep += 1
+                                if error is not None:
+                                    csv_writer.writerow([timestep, elapsed_seconds, error, lap_count])
+                                    csv_file.flush()  # Ensure data is written immediately
+                                else:
+                                    # Log timestep with None error if line couldn't be detected
+                                    csv_writer.writerow([timestep, elapsed_seconds, None, lap_count])
+                                    csv_file.flush()
 
                             # No delay - send commands immediately after processing
                         # else: buffer contains partial data, wait for more
                     elif len(response) == 0:
-                        # Client disconnected
-                        print("Controller disconnected")
+                        # Client disconnected - treat as crash
+                        print("Controller disconnected - drone may have crashed")
+                        should_exit = True
                         client_socket.close()
+                        break
+                    
+                    # Check for crash: no data received for too long (only after first image)
+                    if first_image_received and (time.time() - last_data_time) > CRASH_TIMEOUT:
+                        print(f"No data received for {CRASH_TIMEOUT} seconds - drone may have crashed")
+                        should_exit = True
                         break
                         
                 except socket.error as e:
                     # No data available (non-blocking)
+                    # Check for crash timeout if we've received first image
+                    if first_image_received and (time.time() - last_data_time) > CRASH_TIMEOUT:
+                        print(f"No data received for {CRASH_TIMEOUT} seconds - drone may have crashed")
+                        should_exit = True
+                        break
                     pass
                     
                 time.sleep(0.1)  # Small delay to prevent busy waiting
+                
+            # Break out of connection loop if we should exit
+            if should_exit:
+                break
                 
         except socket.error:
             # No client connected yet
@@ -297,6 +345,7 @@ while True:
 
     except KeyboardInterrupt:
         print("\nShutting down server...")
+        should_exit = True
         break
     except Exception as e:
         print(f"Error: {e}")
