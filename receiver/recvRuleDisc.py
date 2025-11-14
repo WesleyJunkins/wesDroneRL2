@@ -95,12 +95,13 @@ def process_array(array_2d, client_socket):
     
     # Use the line position at the middle for more stable centering
     # The middle is less affected by camera tilt than the top
-    error = line_at_middle - image_center # How far the line is from the center of the image
+    error_signed = line_at_middle - image_center # How far the line is from the center of the image (signed)
+    error = abs(error_signed)  # Absolute error: measures alignment quality (0 = perfectly aligned, larger = more misaligned)
     
     # Much larger deadband to prevent oscillation from camera movement
     # Only correct when significantly off-center to allow faster forward progress
-    if abs(error) > 15.0:  # Very large deadband for smooth following
-        if error > 0:
+    if error > 15.0:  # Very large deadband for smooth following
+        if error_signed > 0:
             command_values[2] = 1  # left (line is to the right, move left to center)
         else:
             command_values[3] = 1  # right (line is to the left, move right to center)

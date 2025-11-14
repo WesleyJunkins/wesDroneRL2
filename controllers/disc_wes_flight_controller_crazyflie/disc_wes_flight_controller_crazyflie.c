@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
     //        active_commands[0], active_commands[1], active_commands[2], active_commands[3],
     //        active_commands[4], active_commands[5], active_commands[6], active_commands[7], active_commands[8]);
     
-    float scalar = 0.5;
+    float scalar = 1.0;
     
     // Apply all active commands concurrently
     for (int i = 0; i < 9; i++) {
