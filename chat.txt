@@ -1,0 +1,74 @@
+Reviewing the PID controller structure to identify useful output targets for training:
+Here are PID-related output targets you can use to train neural networks with image input:
+
+1. Control Commands (Intermediate Level)
+Output: control_commands_t (roll, pitch, yaw, altitude)
+These are the intermediate commands before motor mixing
+Directly control attitude and altitude
+4 outputs: roll, pitch, yaw, altitude
+Useful for: Learning high-level control strategy
+
+2. Motor Power Commands (Low-Level)
+Output: motor_power_t (m1, m2, m3, m4)
+Final motor commands after mixing
+4 outputs: m1, m2, m3, m4
+Useful for: End-to-end control, learning motor mixing implicitly
+
+3. PID Gain Adaptation
+Output: gains_pid_t (all 9 gain values)
+Adaptive gains based on track conditions
+9 outputs: kp_att_rp, kd_att_rp, kp_att_y, kd_att_y, kp_vel_xy, kd_vel_xy, kp_z, kd_z, ki_z
+Useful for: Adaptive control, adjusting controller responsiveness to track geometry
+
+4. Error Signals (What PID is Correcting)
+Output: Error values the PID is minimizing
+6 outputs: pitchError, rollError, yawRateError, altitudeError, vxError, vyError
+Useful for: Learning what corrections are needed for different track sections
+
+5. Desired State Commands
+Output: desired_state_t (roll, pitch, yaw_rate, altitude, vx, vy)
+Target state the controller should achieve
+6 outputs: roll, pitch, yaw_rate, altitude, vx, vy
+Useful for: Learning trajectory planning from visual input
+
+6. State Corrections (Delta Commands)
+Output: How much to adjust from current state
+6 outputs: delta_roll, delta_pitch, delta_yaw_rate, delta_altitude, delta_vx, delta_vy
+Useful for: Incremental control, smoother transitions
+
+7. Individual PID Components
+Output: Separate P, I, D contributions
+For each axis (roll, pitch, yaw, altitude, vx, vy), output the P, I, D terms
+18 outputs: P_roll, I_roll, D_roll, P_pitch, I_pitch, D_pitch, etc.
+Useful for: Understanding which component is most important for different scenarios
+
+8. Normalized Control Commands
+Output: Normalized versions of control commands
+Same as #1 but normalized to [-1, 1] range
+Useful for: Better training stability, easier to learn
+
+9. Hybrid: Desired State + Gains
+Output: Combination of desired state and adaptive gains
+15 outputs: 6 desired_state values + 9 gain values
+Useful for: Learning both trajectory and controller tuning simultaneously
+
+10. Track-Aware Velocity Commands
+Output: Forward velocity + lateral correction
+2-3 outputs: forward_velocity, lateral_velocity (or left/right correction), yaw_rate
+Useful for: Simplified control focused on racing performance
+Recommendations for Your Use Case:
+For speed and smoothness:
+
+Start with #1 (Control Commands) or #5 (Desired State) — these are high-level and should train well
+Try #3 (PID Gain Adaptation) — adaptive gains can improve performance on different track sections
+Consider #2 (Motor Power) — end-to-end learning, but may be harder to train
+For interpretability:
+#4 (Error Signals) — shows what the controller is trying to correct
+#7 (PID Components) — shows which control component matters most
+For simplicity:
+#10 (Track-Aware Velocity) — minimal outputs, focused on racing
+Data collection strategy:
+Collect actual_state, desired_state, control_commands, motor_power, and gains_pid at each timestep
+This lets you train multiple output targets from the same dataset
+You can also compute derived targets (errors, deltas, etc.) post-collection
+Should I help implement data collection for any of these targets?
