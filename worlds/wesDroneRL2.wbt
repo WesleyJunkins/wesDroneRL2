@@ -16,7 +16,7 @@ TexturedBackgroundLight {
 }
 Crazyflie {
   translation 0 0 0
-  controller "disc_wes_flight_controller_crazyflie"
+  controller "pid_only_controller"
   supervisor TRUE
   extensionSlot [
     Camera {
